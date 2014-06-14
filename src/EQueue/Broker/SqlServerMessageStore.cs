@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.SqlClient;
+using System.Linq;
 using System.Threading;
 using ECommon.Components;
 using ECommon.Logging;
@@ -13,14 +14,17 @@ namespace EQueue.Broker
 {
     public class SqlServerMessageStore : IMessageStore
     {
-        private readonly BlockingCollection<QueueMessage> _messageQueue = new BlockingCollection<QueueMessage>();
         private readonly ConcurrentDictionary<long, QueueMessage> _messageDict = new ConcurrentDictionary<long, QueueMessage>();
+        private readonly ConcurrentDictionary<string, long> _queueOffsetDict = new ConcurrentDictionary<string, long>();
+        private readonly DataTable _messageDataTable;
         private readonly IScheduleService _scheduleService;
         private readonly ILogger _logger;
+        private readonly SqlServerMessageStoreSetting _setting;
         private long _currentOffset = -1;
+        private long _persistedOffset = -1;
         private int _persistMessageTaskId;
-        private SqlServerMessageStoreSetting _setting;
-        private DataTable _messageDataTable;
+        private int _deleteMessageTaskId;
+
         private string _deleteMessageSQLFormat;
         private string _selectAllMessageSQL;
 
@@ -38,21 +42,23 @@ namespace EQueue.Broker
 
         public void Recover()
         {
+            Clear();
             RecoverAllMessages();
         }
         public void Start()
         {
-            _persistMessageTaskId = _scheduleService.ScheduleTask(PersistMessage, _setting.CommitMessageInterval, _setting.CommitMessageInterval);
+            _persistMessageTaskId = _scheduleService.ScheduleTask("SqlServerMessageStore.PersistMessages", PersistMessages, _setting.PersistMessageInterval, _setting.PersistMessageInterval);
+            _deleteMessageTaskId = _scheduleService.ScheduleTask("SqlServerMessageStore.DeleteMessages", DeleteMessages, _setting.DeleteMessageInterval, _setting.DeleteMessageInterval);
         }
         public void Shutdown()
         {
             _scheduleService.ShutdownTask(_persistMessageTaskId);
+            _scheduleService.ShutdownTask(_deleteMessageTaskId);
         }
         public QueueMessage StoreMessage(int queueId, long queueOffset, Message message)
         {
             var nextOffset = GetNextOffset();
             var queueMessage = new QueueMessage(message.Topic, message.Body, nextOffset, queueId, queueOffset, DateTime.Now);
-            _messageQueue.Add(queueMessage);
             _messageDict[nextOffset] = queueMessage;
             return queueMessage;
         }
@@ -65,14 +71,22 @@ namespace EQueue.Broker
             }
             return null;
         }
-        public void RemoveMessage(long messageOffset)
+        public void UpdateMaxAllowToDeleteMessageOffset(string topic, int queueId, long messageOffset)
         {
-            QueueMessage queueMessage;
-            _messageDict.TryRemove(messageOffset, out queueMessage);
+            var key = string.Format("{0}-{1}", topic, queueId);
+            _queueOffsetDict.AddOrUpdate(key, messageOffset, (currentKey, oldOffset) => messageOffset > oldOffset ? messageOffset : oldOffset);
+        }
+
+        private void Clear()
+        {
+            _messageDict.Clear();
+            _queueOffsetDict.Clear();
+            _messageDataTable.Rows.Clear();
+            _currentOffset = -1;
+            _persistedOffset = -1;
         }
         private void RecoverAllMessages()
         {
-            _messageDict.Clear();
             using (var connection = new SqlConnection(_setting.ConnectionString))
             {
                 connection.Open();
@@ -94,24 +108,35 @@ namespace EQueue.Broker
                     if (maxMessageOffset >= 0)
                     {
                         _currentOffset = maxMessageOffset;
+                        _persistedOffset = maxMessageOffset;
                     }
                     _logger.InfoFormat("{0} messages recovered, current message offset:{1}", _messageDict.Count, _currentOffset);
                 }
             }
         }
-        private void PersistMessage()
+        private void PersistMessages()
         {
-            _messageDataTable.Rows.Clear();
-            var bufferQueueMessageCount = _messageQueue.Count;
-            var fetchCount = bufferQueueMessageCount < _setting.MessageCommitMaxCount ? bufferQueueMessageCount : _setting.MessageCommitMaxCount;
-            if (fetchCount == 0)
+            var messages = new List<QueueMessage>();
+            var currentOffset = _persistedOffset + 1;
+
+            while (currentOffset <= _currentOffset && messages.Count < _setting.PersistMessageMaxCount)
+            {
+                QueueMessage message;
+                if (_messageDict.TryGetValue(currentOffset, out message))
+                {
+                    messages.Add(message);
+                }
+                currentOffset++;
+            }
+
+            if (messages.Count == 0)
             {
                 return;
             }
 
-            for (var index = 0; index < fetchCount; index++)
+            _messageDataTable.Rows.Clear();
+            foreach (var message in messages)
             {
-                var message = _messageQueue.Take();
                 var row = _messageDataTable.NewRow();
                 row["MessageOffset"] = message.MessageOffset;
                 row["Topic"] = message.Topic;
@@ -122,56 +147,48 @@ namespace EQueue.Broker
                 _messageDataTable.Rows.Add(row);
             }
 
-            BatchCommitMessages(_messageDataTable);
+            var maxMessageOffset = messages.Last().MessageOffset;
+            if (BatchPersistMessages(_messageDataTable, maxMessageOffset))
+            {
+                _persistedOffset = maxMessageOffset;
+            }
         }
-        private void BatchCommitMessages(DataTable messageDataTable)
+        private bool BatchPersistMessages(DataTable messageDataTable, long maxMessageOffset)
         {
             using (var connection = new SqlConnection(_setting.ConnectionString))
             {
                 connection.Open();
-                using (var sqlBulkCopy = new SqlBulkCopy(connection))
+
+                var transaction = connection.BeginTransaction();
+                var result = true;
+
+                using (var copy = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction))
                 {
-                    sqlBulkCopy.BatchSize = 10000;
-                    sqlBulkCopy.BulkCopyTimeout = 60;
-                    sqlBulkCopy.DestinationTableName = _setting.MessageTable;
-                    sqlBulkCopy.ColumnMappings.Add("MessageOffset", "MessageOffset");
-                    sqlBulkCopy.ColumnMappings.Add("Topic", "Topic");
-                    sqlBulkCopy.ColumnMappings.Add("QueueId", "QueueId");
-                    sqlBulkCopy.ColumnMappings.Add("QueueOffset", "QueueOffset");
-                    sqlBulkCopy.ColumnMappings.Add("Body", "Body");
-                    sqlBulkCopy.ColumnMappings.Add("StoredTime", "StoredTime");
+                    copy.BatchSize = _setting.BulkCopyBatchSize;
+                    copy.BulkCopyTimeout = _setting.BulkCopyTimeout;
+                    copy.DestinationTableName = _setting.MessageTable;
+                    copy.ColumnMappings.Add("MessageOffset", "MessageOffset");
+                    copy.ColumnMappings.Add("Topic", "Topic");
+                    copy.ColumnMappings.Add("QueueId", "QueueId");
+                    copy.ColumnMappings.Add("QueueOffset", "QueueOffset");
+                    copy.ColumnMappings.Add("Body", "Body");
+                    copy.ColumnMappings.Add("StoredTime", "StoredTime");
 
                     try
                     {
-                        sqlBulkCopy.WriteToServer(messageDataTable);
-                        _logger.DebugFormat("Bulk copied {0} message to db.", messageDataTable.Rows.Count);
+                        copy.WriteToServer(messageDataTable);
+                        transaction.Commit();
+                        _logger.DebugFormat("Success to bulk copy {0} messages to db, maxMessageOffset:{1}", messageDataTable.Rows.Count, maxMessageOffset);
                     }
                     catch (Exception ex)
                     {
-                        //TODO, retry logic for design.
-                        _logger.Error("Exception raised when bulk copy messages.", ex);
+                        result = false;
+                        transaction.Rollback();
+                        _logger.Error(string.Format("Failed to bulk copy {0} messages to db, maxMessageOffset:{1}", messageDataTable.Rows.Count, maxMessageOffset), ex);
                     }
                 }
-            }
-        }
-        public void DeleteMessages(string topic, int queueId, long maxQueueOffset)
-        {
-            if (!IsTimeToDelete())
-            {
-                return;
-            }
 
-            using (var connection = new SqlConnection(_setting.ConnectionString))
-            {
-                connection.Open();
-                using (var command = new SqlCommand(string.Format(_deleteMessageSQLFormat, topic, queueId, maxQueueOffset), connection))
-                {
-                    var deletedMessageCount = command.ExecuteNonQuery();
-                    if (deletedMessageCount > 0)
-                    {
-                        _logger.DebugFormat("Deleted {0} messages, topic={1}, queueId={2}, queueOffset<{3}.", deletedMessageCount, topic, queueId, maxQueueOffset);
-                    }
-                }
+                return result;
             }
         }
         private DataTable BuildMessageDataTable()
@@ -184,6 +201,37 @@ namespace EQueue.Broker
             table.Columns.Add("Body", typeof(byte[]));
             table.Columns.Add("StoredTime", typeof(DateTime));
             return table;
+        }
+        private void DeleteMessages()
+        {
+            if (!IsTimeToDelete())
+            {
+                return;
+            }
+
+            foreach (var entry in _queueOffsetDict)
+            {
+                var items = entry.Key.Split(new string[] { "-" }, StringSplitOptions.None);
+                var topic = items[0];
+                var queueId = int.Parse(items[1]);
+                var offset = entry.Value;
+                DeleteMessages(topic, queueId, offset);
+            }
+        }
+        private void DeleteMessages(string topic, int queueId, long maxAllowToDeleteOffset)
+        {
+            using (var connection = new SqlConnection(_setting.ConnectionString))
+            {
+                connection.Open();
+                using (var command = new SqlCommand(string.Format(_deleteMessageSQLFormat, topic, queueId, maxAllowToDeleteOffset), connection))
+                {
+                    var deletedMessageCount = command.ExecuteNonQuery();
+                    if (deletedMessageCount > 0)
+                    {
+                        _logger.DebugFormat("Deleted {0} messages, topic={1}, queueId={2}, queueOffset<{3}.", deletedMessageCount, topic, queueId, maxAllowToDeleteOffset);
+                    }
+                }
+            }
         }
         private long GetNextOffset()
         {

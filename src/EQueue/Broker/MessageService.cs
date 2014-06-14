@@ -16,7 +16,7 @@ namespace EQueue.Broker
         private readonly IScheduleService _scheduleService;
         private ILogger _logger;
         private BrokerController _brokerController;
-        private int _deleteConsumedMessageTaskId;
+        private int _removeConsumedMessagesTaskId;
 
         public MessageService(IMessageStore messageStore, IOffsetManager offsetManager, IScheduleService scheduleService)
         {
@@ -32,22 +32,19 @@ namespace EQueue.Broker
         }
         public void Start()
         {
-            _topicQueueDict.Clear();
+            Clear();
             _messageStore.Recover();
             _offsetManager.Recover();
             RecoverTopicQueues();
             _messageStore.Start();
             _offsetManager.Start();
-            _deleteConsumedMessageTaskId = _scheduleService.ScheduleTask(
-                DeleteConsumedMessage,
-                _brokerController.Setting.DeleteMessageInterval,
-                _brokerController.Setting.DeleteMessageInterval);
+            _removeConsumedMessagesTaskId = _scheduleService.ScheduleTask("MessageService.RemoveConsumedMessages", RemoveConsumedMessages, _brokerController.Setting.RemoveMessageInterval, _brokerController.Setting.RemoveMessageInterval);
         }
         public void Shutdown()
         {
             _messageStore.Shutdown();
             _offsetManager.Shutdown();
-            _scheduleService.ShutdownTask(_deleteConsumedMessageTaskId);
+            _scheduleService.ShutdownTask(_removeConsumedMessagesTaskId);
         }
         public MessageStoreResult StoreMessage(Message message, int queueId)
         {
@@ -118,6 +115,10 @@ namespace EQueue.Broker
             return GetQueues(topic).Count;
         }
 
+        private void Clear()
+        {
+            _topicQueueDict.Clear();
+        }
         private void RecoverTopicQueues()
         {
             foreach (var message in _messageStore.Messages)
@@ -146,27 +147,19 @@ namespace EQueue.Broker
                 return queues;
             });
         }
-        private void DeleteConsumedMessage()
+        private void RemoveConsumedMessages()
         {
             foreach (var topicQueues in _topicQueueDict.Values)
             {
                 foreach (var queue in topicQueues)
                 {
-                    var consumedOffset = _offsetManager.GetMinOffset(queue.Topic, queue.QueueId);
-                    for (var index = queue.MaxRemovedOffset + 1; index <= consumedOffset; index++)
+                    var consumedQueueOffset = _offsetManager.GetMinOffset(queue.Topic, queue.QueueId);
+                    if (consumedQueueOffset > queue.CurrentOffset)
                     {
-                        var queueItem = queue.RemoveQueueItem(index);
-                        if (queueItem != null)
-                        {
-                            _messageStore.RemoveMessage(queueItem.MessageOffset);
-                        }
+                        consumedQueueOffset = queue.CurrentOffset;
                     }
-                    var maxQueueOffset = consumedOffset;
-                    if (maxQueueOffset >= queue.CurrentOffset)
-                    {
-                        maxQueueOffset = queue.CurrentOffset;
-                    }
-                    _messageStore.DeleteMessages(queue.Topic, queue.QueueId, maxQueueOffset);
+                    queue.RemoveQueueItems(consumedQueueOffset);
+                    _messageStore.UpdateMaxAllowToDeleteMessageOffset(queue.Topic, queue.QueueId, consumedQueueOffset);
                 }
             }
         }

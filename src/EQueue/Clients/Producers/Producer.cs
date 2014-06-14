@@ -15,13 +15,14 @@ namespace EQueue.Clients.Producers
 {
     public class Producer
     {
+        private readonly object _lockObject;
         private readonly ConcurrentDictionary<string, int> _topicQueueCountDict;
-        private readonly List<int> _taskIds;
         private readonly IScheduleService _scheduleService;
         private readonly SocketRemotingClient _remotingClient;
         private readonly IBinarySerializer _binarySerializer;
         private readonly IQueueSelector _queueSelector;
         private readonly ILogger _logger;
+        private int _refreshTopicQueueCountTaskId;
 
         public string Id { get; private set; }
         public ProducerSetting Setting { get; private set; }
@@ -35,8 +36,9 @@ namespace EQueue.Clients.Producers
             }
             Id = id;
             Setting = setting ?? new ProducerSetting();
+
+            _lockObject = new object();
             _topicQueueCountDict = new ConcurrentDictionary<string, int>();
-            _taskIds = new List<int>();
             _remotingClient = new SocketRemotingClient(Setting.BrokerAddress, Setting.BrokerPort);
             _scheduleService = ObjectContainer.Resolve<IScheduleService>();
             _binarySerializer = ObjectContainer.Resolve<IBinarySerializer>();
@@ -46,18 +48,18 @@ namespace EQueue.Clients.Producers
 
         public Producer Start()
         {
+            _remotingClient.Connect();
             _remotingClient.Start();
-            _taskIds.Add(_scheduleService.ScheduleTask(UpdateAllTopicQueueCount, Setting.UpdateTopicQueueCountInterval, Setting.UpdateTopicQueueCountInterval));
+            StartBackgroundJobs();
+            _remotingClient.ClientSocketConnectionChanged += HandleRemotingClientConnectionChanged;
             _logger.InfoFormat("Started, producerId:{0}", Id);
             return this;
         }
         public Producer Shutdown()
         {
             _remotingClient.Shutdown();
-            foreach (var taskId in _taskIds)
-            {
-                _scheduleService.ShutdownTask(taskId);
-            }
+            _remotingClient.ClientSocketConnectionChanged -= HandleRemotingClientConnectionChanged;
+            StopBackgroundJobs();
             _logger.InfoFormat("Shutdown, producerId:{0}", Id);
             return this;
         }
@@ -72,8 +74,7 @@ namespace EQueue.Clients.Producers
             var remotingRequest = BuildSendMessageRequest(message, queueId);
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, Setting.SendMessageTimeoutMilliseconds);
             var response = _binarySerializer.Deserialize<SendMessageResponse>(remotingResponse.Body);
-            var sendStatus = SendStatus.Success; //TODO, figure from remotingResponse.Code;
-            return new SendResult(sendStatus, response.MessageOffset, response.MessageQueue, response.QueueOffset);
+            return new SendResult(SendStatus.Success, response.MessageOffset, response.MessageQueue, response.QueueOffset);
         }
         public Task<SendResult> SendAsync(Message message, object arg)
         {
@@ -91,14 +92,21 @@ namespace EQueue.Clients.Producers
                 if (remotingResponse != null)
                 {
                     var response = _binarySerializer.Deserialize<SendMessageResponse>(remotingResponse.Body);
-                    var sendStatus = SendStatus.Success; //TODO, figure from remotingResponse.Code;
-                    var result = new SendResult(sendStatus, response.MessageOffset, response.MessageQueue, response.QueueOffset);
+                    var result = new SendResult(SendStatus.Success, response.MessageOffset, response.MessageQueue, response.QueueOffset);
                     taskCompletionSource.SetResult(result);
                 }
                 else
                 {
-                    var result = new SendResult(SendStatus.Failed, "Send message request failed or wait for response timeout.");
-                    taskCompletionSource.SetResult(result);
+                    var errorMessage = "Unknown error occurred when sending message to broker.";
+                    if (!requestTask.IsCompleted)
+                    {
+                        errorMessage = "Send message to broker timeout.";
+                    }
+                    else if (requestTask.IsFaulted)
+                    {
+                        errorMessage = requestTask.Exception.Message;
+                    }
+                    taskCompletionSource.SetResult(new SendResult(SendStatus.Failed, errorMessage));
                 }
             });
             return taskCompletionSource.Task;
@@ -116,7 +124,7 @@ namespace EQueue.Clients.Producers
 
             return count;
         }
-        private void UpdateAllTopicQueueCount()
+        private void RefreshTopicQueueCount()
         {
             foreach (var topic in _topicQueueCountDict.Keys)
             {
@@ -160,6 +168,51 @@ namespace EQueue.Clients.Producers
             var request = new SendMessageRequest { Message = message, QueueId = queueId };
             var data = MessageUtils.EncodeSendMessageRequest(request);
             return new RemotingRequest((int)RequestCode.SendMessage, data);
+        }
+        private void HandleRemotingClientConnectionChanged(bool isConnected)
+        {
+            if (isConnected)
+            {
+                StartBackgroundJobs();
+            }
+            else
+            {
+                StopBackgroundJobs();
+            }
+        }
+        private void StartBackgroundJobs()
+        {
+            lock (_lockObject)
+            {
+                StopBackgroundJobsInternal();
+                StartBackgroundJobsInternal();
+            }
+        }
+        private void StopBackgroundJobs()
+        {
+            lock (_lockObject)
+            {
+                StopBackgroundJobsInternal();
+            }
+        }
+        private void StartBackgroundJobsInternal()
+        {
+            _refreshTopicQueueCountTaskId = _scheduleService.ScheduleTask("Producer.RefreshTopicQueueCount", RefreshTopicQueueCount, Setting.UpdateTopicQueueCountInterval, Setting.UpdateTopicQueueCountInterval);
+            _logger.DebugFormat("Background job started, producerId:{0}", Id);
+        }
+        private void StopBackgroundJobsInternal()
+        {
+            if (_refreshTopicQueueCountTaskId > 0)
+            {
+                _scheduleService.ShutdownTask(_refreshTopicQueueCountTaskId);
+                _refreshTopicQueueCountTaskId = 0;
+            }
+            Clear();
+            _logger.DebugFormat("Background job stop requesting sent, producerId:{0}", Id);
+        }
+        private void Clear()
+        {
+            _topicQueueCountDict.Clear();
         }
     }
 }

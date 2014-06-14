@@ -4,8 +4,8 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using ECommon.Autofac;
-using ECommon.Configurations;
 using ECommon.Components;
+using ECommon.Configurations;
 using ECommon.JsonNet;
 using ECommon.Log4Net;
 using ECommon.Logging;
@@ -24,21 +24,17 @@ namespace QuickStart.ConsumerClient
 
             var messageHandler = new MessageHandler();
             var consumerSetting = new ConsumerSetting { HeartbeatBrokerInterval = 1000, UpdateTopicQueueCountInterval = 1000, RebalanceInterval = 1000 };
-            var consumer1 = new Consumer("Consumer1", "group1", consumerSetting).Subscribe("SampleTopic").Start(messageHandler);
-            var consumer2 = new Consumer("Consumer2", "group1", consumerSetting).Subscribe("SampleTopic").Start(messageHandler);
+            var consumer = new Consumer("Consumer1", "Group1", consumerSetting).Subscribe("SampleTopic").SetMessageHandler(messageHandler).Start();
 
             _logger.Info("Start consumer load balance, please wait for a moment.");
             var scheduleService = ObjectContainer.Resolve<IScheduleService>();
             var waitHandle = new ManualResetEvent(false);
-            var taskId = scheduleService.ScheduleTask(() =>
+            var taskId = scheduleService.ScheduleTask("WaitQueueAllocationComplete", () =>
             {
-                var c1AllocatedQueueIds = consumer1.GetCurrentQueues().Select(x => x.QueueId);
-                var c2AllocatedQueueIds = consumer2.GetCurrentQueues().Select(x => x.QueueId);
-                if (c1AllocatedQueueIds.Count() == 2 && c2AllocatedQueueIds.Count() == 2)
+                var allocatedQueueIds = consumer.GetCurrentQueues().Select(x => x.QueueId);
+                if (allocatedQueueIds.Count() == 2)
                 {
-                    _logger.Info(string.Format("Consumer load balance finished. Queue allocation result: c1:{0}, c2:{1}",
-                        string.Join(",", c1AllocatedQueueIds),
-                        string.Join(",", c2AllocatedQueueIds)));
+                    _logger.InfoFormat("Consumer load balance completed, allocated queueIds:{0}", string.Join(",", allocatedQueueIds));
                     waitHandle.Set();
                 }
             }, 1000, 1000);
@@ -77,12 +73,12 @@ namespace QuickStart.ConsumerClient
                     {
                         _watch = Stopwatch.StartNew();
                     }
-                    else if (count % 1000 == 0 || (count - 4) % 50000 == 0)
+                    else if (count % 1000 == 0)
                     {
                         _logger.InfoFormat("Total handled {0} messages, time spent:{1}", count, _watch.ElapsedMilliseconds);
                     }
-                    context.OnMessageHandled(message);
                 }
+                context.OnMessageHandled(message);
             }
         }
     }

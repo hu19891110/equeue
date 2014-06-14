@@ -1,20 +1,20 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Threading;
+using ECommon.Extensions;
 using EQueue.Protocols;
 
 namespace EQueue.Broker
 {
     public class Queue
     {
-        private ConcurrentDictionary<long, QueueItem> _queueMessageDict = new ConcurrentDictionary<long, QueueItem>();
+        private ConcurrentDictionary<long, QueueItem> _queueItemDict = new ConcurrentDictionary<long, QueueItem>();
         private long _currentOffset = -1;
-        private long _maxRemovedOffset = -1;
 
         public string Topic { get; private set; }
         public int QueueId { get; private set; }
         public long CurrentOffset { get { return _currentOffset; } }
-        public long MaxRemovedOffset { get { return _maxRemovedOffset; } }
         public QueueStatus Status { get; private set; }
 
         public Queue(string topic, int queueId)
@@ -37,24 +37,20 @@ namespace EQueue.Broker
         }
         public void RecoverQueueItem(QueueMessage queueMessage)
         {
-            _queueMessageDict[queueMessage.QueueOffset] = new QueueItem(queueMessage.MessageOffset, queueMessage.StoredTime);
+            _queueItemDict[queueMessage.QueueOffset] = new QueueItem(queueMessage.MessageOffset, queueMessage.StoredTime);
             if (queueMessage.QueueOffset > _currentOffset)
             {
                 _currentOffset = queueMessage.QueueOffset;
             }
-            if (_maxRemovedOffset == -1)
-            {
-                _maxRemovedOffset = queueMessage.QueueOffset - 1;
-            }
         }
         public void AddQueueItem(QueueMessage queueMessage)
         {
-            _queueMessageDict[queueMessage.QueueOffset] = new QueueItem(queueMessage.MessageOffset, queueMessage.StoredTime);
+            _queueItemDict[queueMessage.QueueOffset] = new QueueItem(queueMessage.MessageOffset, queueMessage.StoredTime);
         }
         public long? GetMinQueueOffset()
         {
             long? minOffset = null;
-            foreach (var key in _queueMessageDict.Keys)
+            foreach (var key in _queueItemDict.Keys)
             {
                 if (minOffset == null)
                 {
@@ -70,24 +66,16 @@ namespace EQueue.Broker
         public QueueItem GetQueueItem(long queueOffset)
         {
             QueueItem queueItem;
-            if (_queueMessageDict.TryGetValue(queueOffset, out queueItem))
+            if (_queueItemDict.TryGetValue(queueOffset, out queueItem))
             {
                 return queueItem;
             }
             return null;
         }
-        public QueueItem RemoveQueueItem(long queueOffset)
+        public void RemoveQueueItems(long maxQueueOffset)
         {
-            QueueItem queueItem;
-            if (_queueMessageDict.TryRemove(queueOffset, out queueItem))
-            {
-                if (queueOffset > _maxRemovedOffset)
-                {
-                    _maxRemovedOffset = queueOffset;
-                }
-                return queueItem;
-            }
-            return null;
+            var toRemoveQueueOffsets = _queueItemDict.Keys.Where(key => key <= maxQueueOffset).ToList();
+            toRemoveQueueOffsets.ForEach(queueOffset => _queueItemDict.Remove(queueOffset));
         }
     }
 

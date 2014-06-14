@@ -5,8 +5,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ECommon.Autofac;
-using ECommon.Configurations;
 using ECommon.Components;
+using ECommon.Configurations;
 using ECommon.JsonNet;
 using ECommon.Log4Net;
 using ECommon.Logging;
@@ -51,7 +51,7 @@ namespace QuickStart.ProducerClient
 
             var scheduleService = ObjectContainer.Resolve<IScheduleService>();
             var producer = new Producer("Producer1").Start();
-            var total = 10000;
+            var total = 1000;
             var parallelCount = 10;
 
             var action = new Action(() =>
