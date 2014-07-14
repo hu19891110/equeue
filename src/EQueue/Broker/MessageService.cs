@@ -17,6 +17,8 @@ namespace EQueue.Broker
         private ILogger _logger;
         private BrokerController _brokerController;
         private int _removeConsumedMessagesTaskId;
+        private int _removeQueueIndexTaskId;
+        private long _totalRecoveredQueueIndex;
 
         public MessageService(IMessageStore messageStore, IOffsetManager offsetManager, IScheduleService scheduleService)
         {
@@ -38,16 +40,18 @@ namespace EQueue.Broker
             _messageStore.Start();
             _offsetManager.Start();
             _removeConsumedMessagesTaskId = _scheduleService.ScheduleTask("MessageService.RemoveConsumedMessages", RemoveConsumedMessages, _brokerController.Setting.RemoveMessageInterval, _brokerController.Setting.RemoveMessageInterval);
+            _removeQueueIndexTaskId = _scheduleService.ScheduleTask("MessageService.RemoveQueueIndex", RemoveQueueIndex, _brokerController.Setting.RemoveQueueIndexInterval, _brokerController.Setting.RemoveQueueIndexInterval);
         }
         public void Shutdown()
         {
             _messageStore.Shutdown();
             _offsetManager.Shutdown();
             _scheduleService.ShutdownTask(_removeConsumedMessagesTaskId);
+            _scheduleService.ShutdownTask(_removeQueueIndexTaskId);
         }
         public MessageStoreResult StoreMessage(Message message, int queueId)
         {
-            var queues = GetQueues(message.Topic);
+            var queues = GetQueues(message.Topic, true);
             var queueCount = queues.Count;
             if (queueId >= queueCount || queueId < 0)
             {
@@ -56,19 +60,18 @@ namespace EQueue.Broker
             var queue = queues[queueId];
             var queueOffset = queue.IncrementCurrentOffset();
             var queueMessage = _messageStore.StoreMessage(queueId, queueOffset, message);
-            queue.AddQueueItem(queueMessage.QueueOffset, queueMessage.MessageOffset);
+            queue.SetQueueIndex(queueMessage.QueueOffset, queueMessage.MessageOffset);
             return new MessageStoreResult(queueMessage.MessageOffset, queueMessage.QueueId, queueMessage.QueueOffset);
         }
         public IEnumerable<QueueMessage> GetMessages(string topic, int queueId, long queueOffset, int batchSize)
         {
-            var queues = GetQueues(topic);
+            var queues = GetQueues(topic, true);
             var queue = queues.SingleOrDefault(x => x.QueueId == queueId);
             if (queue != null)
             {
-                var currentQueueOffset = queueOffset;
-                var maxQueueOffset = queueOffset + batchSize;
                 var messages = new List<QueueMessage>();
-                while (currentQueueOffset < maxQueueOffset)
+                var maxQueueOffset = queueOffset + batchSize > queue.CurrentOffset ? queue.CurrentOffset + 1 : queueOffset + batchSize;
+                for (var currentQueueOffset = queueOffset; currentQueueOffset < maxQueueOffset; currentQueueOffset++)
                 {
                     var messageOffset = queue.GetMessageOffset(currentQueueOffset);
                     if (messageOffset >= 0)
@@ -79,7 +82,29 @@ namespace EQueue.Broker
                             messages.Add(message);
                         }
                     }
-                    currentQueueOffset++;
+                    else
+                    {
+                        if (currentQueueOffset < queue.CurrentOffset && _messageStore.SupportBatchLoadQueueIndex)
+                        {
+                            //Batch load queue index from message store.
+                            var indexDict = _messageStore.BatchLoadQueueIndex(topic, queueId, currentQueueOffset);
+                            foreach (var entry in indexDict)
+                            {
+                                queue.SetQueueIndex(entry.Key, entry.Value);
+                            }
+
+                            //Get message offset again from queue.
+                            messageOffset = queue.GetMessageOffset(currentQueueOffset);
+                            if (messageOffset >= 0)
+                            {
+                                var message = _messageStore.GetMessage(messageOffset);
+                                if (message != null)
+                                {
+                                    messages.Add(message);
+                                }
+                            }
+                        }
+                    }
                 }
                 return messages;
             }
@@ -87,7 +112,7 @@ namespace EQueue.Broker
         }
         public long GetQueueCurrentOffset(string topic, int queueId)
         {
-            var queues = GetQueues(topic);
+            var queues = GetQueues(topic, true);
             var queue = queues.SingleOrDefault(x => x.QueueId == queueId);
             if (queue != null)
             {
@@ -95,23 +120,38 @@ namespace EQueue.Broker
             }
             return -1;
         }
-        public long GetQueueMinOffset(string topic, int queueId)
+
+        public IEnumerable<string> GetAllTopics()
         {
-            var queues = GetQueues(topic);
-            var queue = queues.SingleOrDefault(x => x.QueueId == queueId);
-            if (queue != null)
-            {
-                var offset = queue.GetMinQueueOffset();
-                if (offset != null)
-                {
-                    return offset.Value;
-                }
-            }
-            return -1;
+            return _topicQueueDict.Keys;
         }
         public int GetTopicQueueCount(string topic)
         {
-            return GetQueues(topic).Count;
+            return GetQueues(topic, true).Count;
+        }
+        public IList<Queue> GetQueues(string topic, bool autoCreateQueue)
+        {
+            if (autoCreateQueue)
+            {
+                return _topicQueueDict.GetOrAdd(topic, x =>
+                {
+                    var queues = new List<Queue>();
+                    for (var index = 0; index < _brokerController.Setting.DefaultTopicQueueCount; index++)
+                    {
+                        queues.Add(new Queue(x, index));
+                    }
+                    return queues;
+                });
+            }
+            else
+            {
+                IList<Queue> queues;
+                if (_topicQueueDict.TryGetValue(topic, out queues))
+                {
+                    return queues;
+                }
+                return new List<Queue>();
+            }
         }
 
         private void Clear()
@@ -120,28 +160,18 @@ namespace EQueue.Broker
         }
         private void RecoverQueueIndexForMessage(long messageOffset, string topic, int queueId, long queueOffset)
         {
-            var queues = GetQueues(topic);
+            var queues = GetQueues(topic, true);
             if (queueId >= queues.Count)
             {
-                for (var index = queues.Count; index <= queueId; index++)
+                for (var index = queues.Count(); index <= queueId; index++)
                 {
                     queues.Add(new Queue(topic, index));
                 }
             }
             var queue = queues[queueId];
-            queue.RecoverQueueItem(queueOffset, messageOffset);
-        }
-        private IList<Queue> GetQueues(string topic)
-        {
-            return _topicQueueDict.GetOrAdd(topic, x =>
-            {
-                var queues = new List<Queue>();
-                for (var index = 0; index < _brokerController.Setting.DefaultTopicQueueCount; index++)
-                {
-                    queues.Add(new Queue(x, index));
-                }
-                return queues;
-            });
+            var allowSetQueueIndex = !_messageStore.SupportBatchLoadQueueIndex || _totalRecoveredQueueIndex < _brokerController.Setting.QueueIndexMaxCacheSize;
+            queue.RecoverQueueIndex(queueOffset, messageOffset, allowSetQueueIndex);
+            _totalRecoveredQueueIndex++;
         }
         private void RemoveConsumedMessages()
         {
@@ -154,8 +184,42 @@ namespace EQueue.Broker
                     {
                         consumedQueueOffset = queue.CurrentOffset;
                     }
-                    queue.RemoveQueueItems(consumedQueueOffset);
+                    queue.RemoveQueueIndex(consumedQueueOffset);
                     _messageStore.UpdateMaxAllowToDeleteQueueOffset(queue.Topic, queue.QueueId, consumedQueueOffset);
+                }
+            }
+        }
+        private void RemoveQueueIndex()
+        {
+            if (!_messageStore.SupportBatchLoadQueueIndex)
+            {
+                return;
+            }
+
+            var queueEntryList = new List<KeyValuePair<Queue, long>>();
+            foreach (var queues in _topicQueueDict.Values.ToList())
+            {
+                foreach (var queue in queues)
+                {
+                    queueEntryList.Add(new KeyValuePair<Queue, long>(queue, queue.GetMessageCount()));
+                }
+            }
+            var totalQueueIndexCount = queueEntryList.Sum(x => x.Value);
+            var exceedCount = totalQueueIndexCount - _brokerController.Setting.QueueIndexMaxCacheSize;
+            if (exceedCount > 0)
+            {
+                var totalRemovedCount = 0L;
+                foreach (var entry in queueEntryList)
+                {
+                    var queueToRemoveCount = exceedCount * entry.Value / totalQueueIndexCount;
+                    if (queueToRemoveCount > 0)
+                    {
+                        totalRemovedCount += entry.Key.RemoveLastQueueIndex(queueToRemoveCount);
+                    }
+                }
+                if (totalRemovedCount > 0)
+                {
+                    _logger.InfoFormat("Exceed queue index max cache size, exceed count:{0}, current total count:{1}, total removed count:{2}", exceedCount, totalQueueIndexCount, totalRemovedCount);
                 }
             }
         }
