@@ -33,9 +33,9 @@
     <DocumentationFile>D:\nugetpublish\EQueue.XML</DocumentationFile>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="ECommon, Version=1.3.2.0, Culture=neutral, processorArchitecture=MSIL">
+    <Reference Include="ECommon, Version=1.3.8.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\packages\ECommon.1.3.2\lib\net40\ECommon.dll</HintPath>
+      <HintPath>..\packages\ECommon.1.3.8\lib\net40\ECommon.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
@@ -44,8 +44,16 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Broker\InMemoryMessageStoreSetting.cs" />
-    <Compile Include="Broker\RequestHandlers\QueryTopicQueueInfoRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\DisableQueueRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\EnableQueueRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\QueryTopicConsumeInfoRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\QueryConsumerRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\RemoveQueueOffsetInfoRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\RemoveQueueRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\GetTopicQueueIdsForProducerRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\AddQueueRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\QueryTopicQueueInfoRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\QueryConsumerInfoRequestHandler.cs" />
     <Compile Include="Broker\SqlServerOffsetManager.cs" />
     <Compile Include="Broker\SqlServerOffsetManagerSetting.cs" />
     <Compile Include="Broker\SqlServerMessageStoreSetting.cs" />
@@ -63,13 +71,13 @@
     <Compile Include="Broker\QueueStatus.cs" />
     <Compile Include="Broker\RequestHandlers\ConsumerHeartbeatRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\PullMessageRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\GetTopicQueueCountRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\GetTopicQueueIdsForConsumerRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\UpdateQueueOffsetRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\QueryConsumerRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\SendMessageRequestHandler.cs" />
     <Compile Include="Broker\Queue.cs" />
     <Compile Include="Broker\MessageService.cs" />
     <Compile Include="Broker\IMessageService.cs" />
+    <Compile Include="Clients\Consumers\ConsumingMessage.cs" />
     <Compile Include="Clients\Consumers\MessageContext.cs" />
     <Compile Include="Clients\Consumers\IMessageContext.cs" />
     <Compile Include="Clients\Producers\IQueueSelector.cs" />
@@ -82,15 +90,21 @@
     <Compile Include="Clients\Consumers\IAllocateMessageQueueStrategy.cs" />
     <Compile Include="Clients\Consumers\AverageAllocateMessageQueueStrategy.cs" />
     <Compile Include="Clients\Consumers\ConsumerSettings.cs" />
-    <Compile Include="Clients\Consumers\PullRequestSetting.cs" />
     <Compile Include="Clients\Producers\Producer.cs" />
     <Compile Include="Clients\Producers\ProducerSetting.cs" />
     <Compile Include="Clients\Producers\QueueAverageSelector.cs" />
     <Compile Include="Clients\Producers\QueueHashSelector.cs" />
     <Compile Include="Configurations\ConfigurationExtensions.cs" />
-    <Compile Include="Protocols\QueryTopicQueueInfoRequest.cs" />
-    <Compile Include="Protocols\QueryTopicConsumeInfoRequest.cs" />
+    <Compile Include="Protocols\RemoveQueueOffsetInfoRequest.cs" />
     <Compile Include="Protocols\TopicConsumeInfo.cs" />
+    <Compile Include="Protocols\DisableQueueRequest.cs" />
+    <Compile Include="Protocols\EnableQueueRequest.cs" />
+    <Compile Include="Protocols\QueryTopicConsumeInfoRequest.cs" />
+    <Compile Include="Protocols\RemoveQueueRequest.cs" />
+    <Compile Include="Protocols\AddQueueRequest.cs" />
+    <Compile Include="Protocols\QueryTopicQueueInfoRequest.cs" />
+    <Compile Include="Protocols\QueryConsumerInfoRequest.cs" />
+    <Compile Include="Protocols\ConsumerInfo.cs" />
     <Compile Include="Protocols\TopicQueueInfo.cs" />
     <Compile Include="Protocols\QueueMessage.cs" />
     <Compile Include="Protocols\ConsumerData.cs" />

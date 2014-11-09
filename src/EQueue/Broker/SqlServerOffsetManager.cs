@@ -1,10 +1,14 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Data.SqlClient;
+using System.Linq;
 using System.Threading;
 using ECommon.Components;
+using ECommon.Extensions;
 using ECommon.Logging;
 using ECommon.Scheduling;
+using EQueue.Protocols;
 
 namespace EQueue.Broker
 {
@@ -89,6 +93,49 @@ namespace EQueue.Broker
             }
 
             return minOffset;
+        }
+        public void RemoveQueueOffset(string topic, int queueId)
+        {
+            var key = string.Format("{0}-{1}", topic, queueId);
+            foreach (var groupEntry in _groupQueueOffsetDict)
+            {
+                groupEntry.Value.Remove(key);
+            }
+        }
+        public void RemoveQueueOffset(string consumerGroup, string topic, int queueId)
+        {
+            ConcurrentDictionary<string, long> queueOffsetDict;
+            if (_groupQueueOffsetDict.TryGetValue(consumerGroup, out queueOffsetDict))
+            {
+                var key = string.Format("{0}-{1}", topic, queueId);
+                long offset;
+                if (queueOffsetDict.TryRemove(key, out offset))
+                {
+                    _logger.DebugFormat("Remove queue offset success, topic:{0}, queueId:{1}, consumer group:{2}", topic, queueId, consumerGroup);
+                }
+            }
+        }
+        public IEnumerable<TopicConsumeInfo> QueryTopicConsumeInfos(string groupName, string topic)
+        {
+            var entryList = _groupQueueOffsetDict.Where(x => string.IsNullOrEmpty(groupName) || x.Key.Contains(groupName));
+            var topicConsumeInfoList = new List<TopicConsumeInfo>();
+
+            foreach (var entry in entryList)
+            {
+                foreach (var subEntry in entry.Value.Where(x => string.IsNullOrEmpty(topic) || x.Key.Split(new string[] { "-" }, StringSplitOptions.None)[0].Contains(topic)))
+                {
+                    var items = subEntry.Key.Split(new string[] { "-" }, StringSplitOptions.None);
+                    topicConsumeInfoList.Add(new TopicConsumeInfo
+                    {
+                        ConsumerGroup = entry.Key,
+                        Topic = items[0],
+                        QueueId = int.Parse(items[1]),
+                        ConsumedOffset = subEntry.Value
+                    });
+                }
+            }
+
+            return topicConsumeInfoList;
         }
 
         private void Clear()

@@ -3,7 +3,7 @@
     ViewBag.Title = "队列消费信息";
 }
 <div>
-    @using (Html.BeginForm("ConsumeInfo", "Home", new { }, FormMethod.Post, new { @class = "form-horizontal", role = "form" }))
+    @using (Html.BeginForm("TopicConsumeInfo", "Home", new { }, FormMethod.Post, new { @class = "form-horizontal", role = "form" }))
     {
         <div class="form-group">
             @Html.LabelFor(m => m.Group, new { @class = "control-label" })
@@ -16,20 +16,23 @@
     <table class="table table-striped">
         <thead>
             <tr>
-                <th width="20%" class="vertical-center">
+                <th width="15%" class="vertical-center">
                     ConsumerGroup
                 </th>
-                <th width="20%" class="text-center vertical-center">
-                    ConsumerId
-                </th>
-                <th width="20%" class="text-center vertical-center">
+                <th width="15%" class="text-center vertical-center">
                     Topic
                 </th>
-                <th width="20%" class="text-center vertical-center">
+                <th width="15%" class="text-center vertical-center">
                     QueueId
                 </th>
-                <th width="20%" class="text-center vertical-center">
+                <th width="15%" class="text-center vertical-center">
                     ConsumedOffset
+                </th>
+                <th width="15%" class="text-center vertical-center">
+                    HasActiveConsumer
+                </th>
+                <th width="25%" class="text-center vertical-center">
+                    操作
                 </th>
             </tr>
         </thead>
@@ -41,9 +44,6 @@
                         @item.ConsumerGroup
                     </td>
                     <td class="text-center vertical-center">
-                        @item.ConsumerId
-                    </td>
-                    <td class="text-center vertical-center">
                         @item.Topic
                     </td>
                     <td class="text-center vertical-center">
@@ -51,6 +51,12 @@
                     </td>
                     <td class="text-center vertical-center">
                         @item.ConsumedOffset
+                    </td>
+                    <td class="text-center vertical-center">
+                        @item.HasConsumer
+                    </td>
+                    <td class="text-center vertical-center">
+                        @Html.ActionLink("删除", "RemoveQueueOffsetInfo", new { consumerGroup = item.ConsumerGroup, topic = item.Topic, queueId = item.QueueId })
                     </td>
                 </tr>
             }

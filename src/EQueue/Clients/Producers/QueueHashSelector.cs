@@ -1,19 +1,30 @@
 ﻿using System;
-using EQueue.Clients.Producers;
+using System.Collections.Generic;
 using EQueue.Protocols;
 
 namespace EQueue.Clients.Producers
 {
     public class QueueHashSelector : IQueueSelector
     {
-        public int SelectQueueId(int totalQueueCount, Message message, object arg)
+        public int SelectQueueId(IList<int> availableQueueIds, Message message, object arg)
         {
-            var value = arg.GetHashCode();
-            if (value < 0)
+            if (availableQueueIds.Count == 0)
             {
-                value = Math.Abs(value);
+                throw new Exception(string.Format("No available queue for topic [{0}].", message.Topic));
             }
-            return value % totalQueueCount;
+            unchecked
+            {
+                int hash = 23;
+                foreach (char c in arg.ToString())
+                {
+                    hash = (hash << 5) - hash + c;
+                }
+                if (hash < 0)
+                {
+                    hash = Math.Abs(hash);
+                }
+                return availableQueueIds[(int)(hash % availableQueueIds.Count)];
+            }
         }
     }
 }

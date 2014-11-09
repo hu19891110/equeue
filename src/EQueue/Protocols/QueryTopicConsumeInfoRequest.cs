@@ -13,5 +13,10 @@ namespace EQueue.Protocols
             GroupName = groupName;
             Topic = topic;
         }
+
+        public override string ToString()
+        {
+            return string.Format("[GroupName:{0}, Topic:{1}]", GroupName, Topic);
+        }
     }
 }

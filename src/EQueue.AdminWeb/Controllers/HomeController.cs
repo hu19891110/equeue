@@ -5,31 +5,66 @@ namespace EQueue.AdminWeb.Controllers
 {
     public class HomeController : Controller
     {
-        private QueryService _queryService;
+        private MessageService _messageService;
 
-        public HomeController(QueryService queryService)
+        public HomeController(MessageService messageService)
         {
-            _queryService = queryService;
+            _messageService = messageService;
         }
 
         public ActionResult Index(string topic)
         {
-            var topicQueueInfos = _queryService.GetTopicQueueInfo(topic);
+            var topicQueueInfos = _messageService.GetTopicQueueInfo(topic);
             return View(new TopicQueueViewModel
             {
                 Topic = topic,
                 TopicQueueInfos = topicQueueInfos
             });
         }
-        public ActionResult ConsumeInfo(string group, string topic)
+        public ActionResult ConsumerInfo(string group, string topic)
         {
-            var topicConsumeInfos = _queryService.GetTopicConsumeInfo(group, topic);
+            var consumerInfos = _messageService.GetConsumerInfo(group, topic);
+            return View(new ConsumerViewModel
+            {
+                Group = group,
+                Topic = topic,
+                ConsumerInfos = consumerInfos
+            });
+        }
+        public ActionResult TopicConsumeInfo(string group, string topic)
+        {
+            var topicConsumeInfos = _messageService.GetTopicConsumeInfo(group, topic);
             return View(new TopicConsumeViewModel
             {
                 Group = group,
                 Topic = topic,
                 TopicConsumeInfos = topicConsumeInfos
             });
+        }
+        public ActionResult AddQueue(string topic)
+        {
+            _messageService.AddQueue(topic);
+            return RedirectToAction("Index");
+        }
+        public ActionResult RemoveQueue(string topic, int queueId)
+        {
+            _messageService.RemoveQueue(topic, queueId);
+            return RedirectToAction("Index");
+        }
+        public ActionResult EnableQueue(string topic, int queueId)
+        {
+            _messageService.EnableQueue(topic, queueId);
+            return RedirectToAction("Index");
+        }
+        public ActionResult DisableQueue(string topic, int queueId)
+        {
+            _messageService.DisableQueue(topic, queueId);
+            return RedirectToAction("Index");
+        }
+        public ActionResult RemoveQueueOffsetInfo(string consumerGroup, string topic, int queueId)
+        {
+            _messageService.RemoveQueueOffsetInfo(consumerGroup, topic, queueId);
+            return RedirectToAction("Index");
         }
     }
 }

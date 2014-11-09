@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
@@ -23,7 +22,12 @@ namespace QuickStart.ConsumerClient
             InitializeEQueue();
 
             var messageHandler = new MessageHandler();
-            var consumerSetting = new ConsumerSetting { HeartbeatBrokerInterval = 1000, UpdateTopicQueueCountInterval = 1000, RebalanceInterval = 1000 };
+            var consumerSetting = new ConsumerSetting
+            {
+                HeartbeatBrokerInterval = 1000,
+                UpdateTopicQueueCountInterval = 1000,
+                RebalanceInterval = 1000
+            };
             var consumer = new Consumer("Consumer1", "Group1", consumerSetting).Subscribe("SampleTopic").SetMessageHandler(messageHandler).Start();
 
             _logger.Info("Start consumer load balance, please wait for a moment.");
@@ -58,7 +62,6 @@ namespace QuickStart.ConsumerClient
             _logger = ObjectContainer.Resolve<ILoggerFactory>().Create("Program");
         }
 
-        static ConcurrentDictionary<long, long> _handledMessageDict = new ConcurrentDictionary<long, long>();
         class MessageHandler : IMessageHandler
         {
             private int _handledCount;
@@ -66,18 +69,16 @@ namespace QuickStart.ConsumerClient
 
             public void Handle(QueueMessage message, IMessageContext context)
             {
-                if (_handledMessageDict.TryAdd(message.MessageOffset, message.MessageOffset))
+                var count = Interlocked.Increment(ref _handledCount);
+                if (count == 1)
                 {
-                    var count = Interlocked.Increment(ref _handledCount);
-                    if (count == 1)
-                    {
-                        _watch = Stopwatch.StartNew();
-                    }
-                    else if (count % 1000 == 0)
-                    {
-                        _logger.InfoFormat("Total handled {0} messages, time spent:{1}", count, _watch.ElapsedMilliseconds);
-                    }
+                    _watch = Stopwatch.StartNew();
                 }
+                else if (count % 10000 == 0)
+                {
+                    _logger.InfoFormat("Total handled {0} messages, time spent:{1}", count, _watch.ElapsedMilliseconds);
+                }
+
                 context.OnMessageHandled(message);
             }
         }

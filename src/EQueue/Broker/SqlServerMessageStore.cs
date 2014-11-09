@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.SqlClient;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using ECommon.Components;
@@ -24,14 +23,15 @@ namespace EQueue.Broker
         private long _currentOffset = -1;
         private long _persistedOffset = -1;
         private int _persistMessageTaskId;
-        private int _removeMessageFromMemoryTaskId;
+        private int _removeExceedMaxCacheMessageFromMemoryTaskId;
         private int _removeConsumedMessageFromMemoryTaskId;
         private int _deleteMessageTaskId;
+        private int _isBatchPersistingMessages;
 
-        private string _deleteMessageSQLFormat;
-        private string _selectAllMessageSQL;
-        private string _batchLoadMessageSQLFormat;
-        private string _batchLoadQueueIndexSQLFormat;
+        private readonly string _deleteMessageSQLFormat;
+        private readonly string _selectAllMessageSQL;
+        private readonly string _batchLoadMessageSQLFormat;
+        private readonly string _batchLoadQueueIndexSQLFormat;
 
         public bool SupportBatchLoadQueueIndex
         {
@@ -58,22 +58,22 @@ namespace EQueue.Broker
         }
         public void Start()
         {
-            _persistMessageTaskId = _scheduleService.ScheduleTask("SqlServerMessageStore.PersistMessages", PersistMessages, _setting.PersistMessageInterval, _setting.PersistMessageInterval);
-            _removeMessageFromMemoryTaskId = _scheduleService.ScheduleTask("SqlServerMessageStore.RemoveMessagesFromMemory", RemoveMessagesFromMemory, _setting.RemoveMessagesFromMemoryInterval, _setting.RemoveMessagesFromMemoryInterval);
-            _removeConsumedMessageFromMemoryTaskId = _scheduleService.ScheduleTask("SqlServerMessageStore.RemoveConsumedMessagesFromMemory", RemoveConsumedMessagesFromMemory, _setting.RemoveConsumedMessagesFromMemoryInterval, _setting.RemoveConsumedMessagesFromMemoryInterval);
+            _persistMessageTaskId = _scheduleService.ScheduleTask("SqlServerMessageStore.TryPersistMessages", TryPersistMessages, _setting.PersistMessageInterval, _setting.PersistMessageInterval);
+            _removeExceedMaxCacheMessageFromMemoryTaskId = _scheduleService.ScheduleTask("SqlServerMessageStore.RemoveExceedMaxCacheMessageFromMemory", RemoveExceedMaxCacheMessageFromMemory, _setting.RemoveExceedMaxCacheMessageFromMemoryInterval, _setting.RemoveExceedMaxCacheMessageFromMemoryInterval);
+            _removeConsumedMessageFromMemoryTaskId = _scheduleService.ScheduleTask("SqlServerMessageStore.RemoveConsumedMessageFromMemory", RemoveConsumedMessageFromMemory, _setting.RemoveConsumedMessageFromMemoryInterval, _setting.RemoveConsumedMessageFromMemoryInterval);
             _deleteMessageTaskId = _scheduleService.ScheduleTask("SqlServerMessageStore.DeleteMessages", DeleteMessages, _setting.DeleteMessageInterval, _setting.DeleteMessageInterval);
         }
         public void Shutdown()
         {
             _scheduleService.ShutdownTask(_persistMessageTaskId);
-            _scheduleService.ShutdownTask(_removeMessageFromMemoryTaskId);
+            _scheduleService.ShutdownTask(_removeExceedMaxCacheMessageFromMemoryTaskId);
             _scheduleService.ShutdownTask(_removeConsumedMessageFromMemoryTaskId);
             _scheduleService.ShutdownTask(_deleteMessageTaskId);
         }
         public QueueMessage StoreMessage(int queueId, long queueOffset, Message message)
         {
             var nextOffset = GetNextOffset();
-            var queueMessage = new QueueMessage(message.Topic, message.Body, nextOffset, queueId, queueOffset, DateTime.Now);
+            var queueMessage = new QueueMessage(message.Topic, message.Code, message.Body, nextOffset, queueId, queueOffset, DateTime.Now);
             _messageDict[nextOffset] = queueMessage;
             return queueMessage;
         }
@@ -123,7 +123,7 @@ namespace EQueue.Broker
             _currentOffset = -1;
             _persistedOffset = -1;
         }
-        private void RemoveMessagesFromMemory()
+        private void RemoveExceedMaxCacheMessageFromMemory()
         {
             var currentTotalCount = _messageDict.Count;
             var exceedCount = currentTotalCount - _setting.MessageMaxCacheSize;
@@ -146,7 +146,7 @@ namespace EQueue.Broker
                 }
             }
         }
-        private void RemoveConsumedMessagesFromMemory()
+        private void RemoveConsumedMessageFromMemory()
         {
             var queueMessages = _messageDict.Values.ToList();
             foreach (var queueMessage in queueMessages)
@@ -214,11 +214,34 @@ namespace EQueue.Broker
             var topic = (string)reader["Topic"];
             var queueId = (int)reader["QueueId"];
             var queueOffset = (long)reader["QueueOffset"];
+            var code = (int)reader["Code"];
             var body = (byte[])reader["Body"];
             var storedTime = (DateTime)reader["StoredTime"];
-            return new QueueMessage(topic, body, messageOffset, queueId, queueOffset, storedTime);
+            return new QueueMessage(topic, code, body, messageOffset, queueId, queueOffset, storedTime);
         }
-        private void PersistMessages()
+        private void TryPersistMessages()
+        {
+            if (Interlocked.CompareExchange(ref _isBatchPersistingMessages, 1, 0) == 0)
+            {
+                try
+                {
+                    var hasPersistedAllMessages = PersistMessages();
+                    while (!hasPersistedAllMessages)
+                    {
+                        hasPersistedAllMessages = PersistMessages();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(string.Format("Failed to persist messages to db, last persisted offset:{0}", _persistedOffset), ex);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _isBatchPersistingMessages, 0);
+                }
+            }
+        }
+        private bool PersistMessages()
         {
             var messages = new List<QueueMessage>();
             var currentOffset = _persistedOffset + 1;
@@ -235,7 +258,7 @@ namespace EQueue.Broker
 
             if (messages.Count == 0)
             {
-                return;
+                return true;
             }
 
             _messageDataTable.Rows.Clear();
@@ -246,6 +269,7 @@ namespace EQueue.Broker
                 row["Topic"] = message.Topic;
                 row["QueueId"] = message.QueueId;
                 row["QueueOffset"] = message.QueueOffset;
+                row["Code"] = message.Code;
                 row["Body"] = message.Body;
                 row["StoredTime"] = message.StoredTime;
                 _messageDataTable.Rows.Add(row);
@@ -256,6 +280,9 @@ namespace EQueue.Broker
             {
                 _persistedOffset = maxMessageOffset;
             }
+
+            var hasFetchedAllEvents = messages.Count < _setting.PersistMessageMaxCount;
+            return hasFetchedAllEvents;
         }
         private bool BatchPersistMessages(DataTable messageDataTable, long maxMessageOffset)
         {
@@ -275,6 +302,7 @@ namespace EQueue.Broker
                     copy.ColumnMappings.Add("Topic", "Topic");
                     copy.ColumnMappings.Add("QueueId", "QueueId");
                     copy.ColumnMappings.Add("QueueOffset", "QueueOffset");
+                    copy.ColumnMappings.Add("Code", "Code");
                     copy.ColumnMappings.Add("Body", "Body");
                     copy.ColumnMappings.Add("StoredTime", "StoredTime");
 
@@ -302,6 +330,7 @@ namespace EQueue.Broker
             table.Columns.Add("Topic", typeof(string));
             table.Columns.Add("QueueId", typeof(int));
             table.Columns.Add("QueueOffset", typeof(long));
+            table.Columns.Add("Code", typeof(int));
             table.Columns.Add("Body", typeof(byte[]));
             table.Columns.Add("StoredTime", typeof(DateTime));
             return table;

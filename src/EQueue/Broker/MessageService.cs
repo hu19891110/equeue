@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using ECommon.Components;
@@ -11,14 +12,14 @@ namespace EQueue.Broker
 {
     public class MessageService : IMessageService
     {
-        private ConcurrentDictionary<string, IList<Queue>> _topicQueueDict = new ConcurrentDictionary<string, IList<Queue>>();
+        private readonly ConcurrentDictionary<string, IList<Queue>> _topicQueueDict = new ConcurrentDictionary<string, IList<Queue>>();
         private readonly IMessageStore _messageStore;
         private readonly IOffsetManager _offsetManager;
         private readonly IScheduleService _scheduleService;
-        private ILogger _logger;
+        private readonly ILogger _logger;
         private BrokerController _brokerController;
-        private int _removeConsumedMessagesTaskId;
-        private int _removeQueueIndexTaskId;
+        private int _removeConsumedMessageTaskId;
+        private int _removeExceedMaxCacheQueueIndexTaskId;
         private long _totalRecoveredQueueIndex;
 
         public MessageService(IMessageStore messageStore, IOffsetManager offsetManager, IScheduleService scheduleService)
@@ -40,25 +41,28 @@ namespace EQueue.Broker
             _messageStore.Recover(RecoverQueueIndexForMessage);
             _messageStore.Start();
             _offsetManager.Start();
-            _removeConsumedMessagesTaskId = _scheduleService.ScheduleTask("MessageService.RemoveConsumedMessages", RemoveConsumedMessages, _brokerController.Setting.RemoveMessageInterval, _brokerController.Setting.RemoveMessageInterval);
-            _removeQueueIndexTaskId = _scheduleService.ScheduleTask("MessageService.RemoveQueueIndex", RemoveQueueIndex, _brokerController.Setting.RemoveQueueIndexInterval, _brokerController.Setting.RemoveQueueIndexInterval);
+            _removeConsumedMessageTaskId = _scheduleService.ScheduleTask("MessageService.RemoveConsumedMessage", RemoveConsumedMessage, _brokerController.Setting.RemoveConsumedMessageInterval, _brokerController.Setting.RemoveConsumedMessageInterval);
+            _removeExceedMaxCacheQueueIndexTaskId = _scheduleService.ScheduleTask("MessageService.RemoveExceedMaxCacheQueueIndex", RemoveExceedMaxCacheQueueIndex, _brokerController.Setting.RemoveExceedMaxCacheQueueIndexInterval, _brokerController.Setting.RemoveExceedMaxCacheQueueIndexInterval);
         }
         public void Shutdown()
         {
             _messageStore.Shutdown();
             _offsetManager.Shutdown();
-            _scheduleService.ShutdownTask(_removeConsumedMessagesTaskId);
-            _scheduleService.ShutdownTask(_removeQueueIndexTaskId);
+            _scheduleService.ShutdownTask(_removeConsumedMessageTaskId);
+            _scheduleService.ShutdownTask(_removeExceedMaxCacheQueueIndexTaskId);
         }
         public MessageStoreResult StoreMessage(Message message, int queueId)
         {
             var queues = GetQueues(message.Topic);
-            var queueCount = queues.Count;
-            if (queueId >= queueCount || queueId < 0)
+            if (queues.Count == 0)
             {
-                throw new InvalidQueueIdException(message.Topic, queueCount, queueId);
+                throw new Exception(string.Format("No available queue for storing message. topic:{0}", message.Topic));
             }
-            var queue = queues[queueId];
+            var queue = queues.SingleOrDefault(x => x.QueueId == queueId);
+            if (queue == null)
+            {
+                throw new InvalidQueueIdException(message.Topic, queues.Select(x => x.QueueId), queueId);
+            }
             var queueOffset = queue.IncrementCurrentOffset();
             var queueMessage = _messageStore.StoreMessage(queueId, queueOffset, message);
             queue.SetQueueIndex(queueMessage.QueueOffset, queueMessage.MessageOffset);
@@ -121,16 +125,82 @@ namespace EQueue.Broker
             }
             return -1;
         }
+        public long GetQueueMinOffset(string topic, int queueId)
+        {
+            var queues = GetQueues(topic);
+            var queue = queues.SingleOrDefault(x => x.QueueId == queueId);
+            if (queue != null)
+            {
+                var offset = queue.GetMinQueueOffset();
+                return offset != null ? offset.Value : -1;
+            }
+            return -1;
+        }
 
         public IEnumerable<string> GetAllTopics()
         {
             return _topicQueueDict.Keys;
         }
-        public int GetTopicQueueCount(string topic)
+        public IEnumerable<int> GetQueueIdsForProducer(string topic)
         {
-            return GetQueues(topic).Count;
+            return GetQueues(topic).Where(x => x.Status == QueueStatus.Normal).Select(x => x.QueueId);
         }
-        public IList<Queue> GetQueues(string topic)
+        public IEnumerable<int> GetQueueIdsForConsumer(string topic)
+        {
+            return GetQueues(topic).Select(x => x.QueueId);
+        }
+        public IList<Queue> QueryQueues(string topic)
+        {
+            var queuesList = _topicQueueDict.Where(x => x.Key.Contains(topic)).Select(x => x.Value);
+            var totalQueus = new List<Queue>();
+            queuesList.ForEach(x => x.ForEach(y => totalQueus.Add(y)));
+            return totalQueus;
+        }
+        public void AddQueue(string topic)
+        {
+            var queues = GetQueues(topic);
+            if (queues.Count == 0)
+            {
+                queues.Add(new Queue(topic, 0));
+            }
+            else
+            {
+                queues.Add(new Queue(topic, queues.Max(x => x.QueueId) + 1));
+            }
+        }
+        public void RemoveQueue(string topic, int queueId)
+        {
+            var queues = GetQueues(topic);
+            var queue = queues.SingleOrDefault(x => x.QueueId == queueId);
+            if (queue != null)
+            {
+                queues.Remove(queue);
+                _offsetManager.RemoveQueueOffset(topic, queueId);
+                _messageStore.UpdateMaxAllowToDeleteQueueOffset(topic, queueId, long.MaxValue);
+            }
+        }
+        public void EnableQueue(string topic, int queueId)
+        {
+            var queue = GetQueues(topic).SingleOrDefault(x => x.QueueId == queueId);
+            if (queue != null)
+            {
+                queue.Enable();
+            }
+        }
+        public void DisableQueue(string topic, int queueId)
+        {
+            var queue = GetQueues(topic).SingleOrDefault(x => x.QueueId == queueId);
+            if (queue != null)
+            {
+                queue.Disable();
+            }
+        }
+
+        private void Clear()
+        {
+            _topicQueueDict.Clear();
+        }
+        private IList<Queue> GetQueues(string topic)
         {
             return _topicQueueDict.GetOrAdd(topic, x =>
             {
@@ -141,18 +211,6 @@ namespace EQueue.Broker
                 }
                 return queues;
             });
-        }
-        public IList<Queue> QueryQueues(string topic)
-        {
-            var queuesList = _topicQueueDict.Where(x => x.Key.Contains(topic)).Select(x => x.Value);
-            var totalQueus = new List<Queue>();
-            queuesList.ForEach(x => x.ForEach(y => totalQueus.Add(y)));
-            return totalQueus;
-        }
-
-        private void Clear()
-        {
-            _topicQueueDict.Clear();
         }
         private void RecoverQueueIndexForMessage(long messageOffset, string topic, int queueId, long queueOffset)
         {
@@ -169,7 +227,7 @@ namespace EQueue.Broker
             queue.RecoverQueueIndex(queueOffset, messageOffset, allowSetQueueIndex);
             _totalRecoveredQueueIndex++;
         }
-        private void RemoveConsumedMessages()
+        private void RemoveConsumedMessage()
         {
             foreach (var topicQueues in _topicQueueDict.Values)
             {
@@ -185,7 +243,7 @@ namespace EQueue.Broker
                 }
             }
         }
-        private void RemoveQueueIndex()
+        private void RemoveExceedMaxCacheQueueIndex()
         {
             if (!_messageStore.SupportBatchLoadQueueIndex)
             {
