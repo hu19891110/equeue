@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using ECommon.Components;
+using ECommon.Extensions;
 using ECommon.Logging;
 using ECommon.Scheduling;
 using EQueue.Protocols;
@@ -41,10 +42,10 @@ namespace EQueue.Broker
         {
             _scheduleService.ShutdownTask(_removeMessageFromMemoryTaskId);
         }
-        public QueueMessage StoreMessage(int queueId, long queueOffset, Message message)
+        public QueueMessage StoreMessage(int queueId, long queueOffset, Message message, string routingKey)
         {
             var nextOffset = GetNextOffset();
-            var queueMessage = new QueueMessage(message.Topic, message.Code, message.Body, nextOffset, queueId, queueOffset, DateTime.Now);
+            var queueMessage = new QueueMessage(message.Topic, message.Code, message.Body, nextOffset, queueId, queueOffset, DateTime.Now, routingKey);
             _messageDict[nextOffset] = queueMessage;
             return queueMessage;
         }
@@ -66,21 +67,45 @@ namespace EQueue.Broker
         {
             throw new NotImplementedException();
         }
+        public IEnumerable<QueueMessage> QueryMessages(string topic, int? queueId, int? code, string routingKey, int pageIndex, int pageSize, out int total)
+        {
+            var source = _messageDict.Values;
+            var predicate = new Func<QueueMessage, bool>(x =>
+            {
+                var pass = true;
+                if (!string.IsNullOrEmpty(topic))
+                {
+                    pass = x.Topic == topic;
+                }
+                if (pass && queueId != null)
+                {
+                    pass = x.QueueId == queueId.Value;
+                }
+                if (pass && code != null)
+                {
+                    pass = x.Code == code.Value;
+                }
+                if (pass && !string.IsNullOrEmpty(routingKey))
+                {
+                    pass = x.RoutingKey == routingKey;
+                }
+                return pass;
+            });
+
+            total = source.Count(predicate);
+            return source.Where(predicate).Skip((pageIndex - 1) * pageSize).Take(pageSize);
+        }
 
         private void RemoveConsumedMessagesFromMemory()
         {
-            var queueMessages = _messageDict.Values.ToList();
+            var queueMessages = _messageDict.Values;
             foreach (var queueMessage in queueMessages)
             {
                 var key = string.Format("{0}-{1}", queueMessage.Topic, queueMessage.QueueId);
                 long maxAllowToDeleteQueueOffset;
                 if (_queueOffsetDict.TryGetValue(key, out maxAllowToDeleteQueueOffset) && queueMessage.QueueOffset <= maxAllowToDeleteQueueOffset)
                 {
-                    QueueMessage removedQueueMessage;
-                    if (!_messageDict.TryRemove(queueMessage.MessageOffset, out removedQueueMessage))
-                    {
-                        _logger.ErrorFormat("Failed to remove consumed message, messageOffset:{0}", queueMessage.MessageOffset);
-                    }
+                    _messageDict.Remove(queueMessage.MessageOffset);
                 }
             }
         }

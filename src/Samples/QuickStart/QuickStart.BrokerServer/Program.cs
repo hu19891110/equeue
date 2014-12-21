@@ -13,10 +13,7 @@ namespace QuickStart.BrokerServer
         static void Main(string[] args)
         {
             InitializeEQueue();
-            var setting = new BrokerSetting();
-            setting.NotifyWhenMessageArrived = false;
-            setting.RemoveConsumedMessageInterval = 1000;
-            new BrokerController(setting).Start();
+            new BrokerController().Start();
             Console.ReadLine();
         }
 

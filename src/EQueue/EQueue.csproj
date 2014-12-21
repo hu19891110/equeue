@@ -33,9 +33,9 @@
     <DocumentationFile>D:\nugetpublish\EQueue.XML</DocumentationFile>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="ECommon, Version=1.3.8.0, Culture=neutral, processorArchitecture=MSIL">
+    <Reference Include="ECommon, Version=1.3.9.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\packages\ECommon.1.3.8\lib\net40\ECommon.dll</HintPath>
+      <HintPath>..\packages\ECommon.1.3.9\lib\net40\ECommon.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
@@ -46,6 +46,8 @@
     <Compile Include="Broker\InMemoryMessageStoreSetting.cs" />
     <Compile Include="Broker\RequestHandlers\DisableQueueRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\EnableQueueRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\GetMessageDetailRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\QueryMessageRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\QueryTopicConsumeInfoRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\QueryConsumerRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\RemoveQueueOffsetInfoRequestHandler.cs" />
@@ -80,6 +82,7 @@
     <Compile Include="Clients\Consumers\ConsumingMessage.cs" />
     <Compile Include="Clients\Consumers\MessageContext.cs" />
     <Compile Include="Clients\Consumers\IMessageContext.cs" />
+    <Compile Include="Protocols\ConsumeFromWhere.cs" />
     <Compile Include="Clients\Producers\IQueueSelector.cs" />
     <Compile Include="Broker\InMemoryMessageStore.cs" />
     <Compile Include="Broker\IMessageStore.cs" />
@@ -95,6 +98,9 @@
     <Compile Include="Clients\Producers\QueueAverageSelector.cs" />
     <Compile Include="Clients\Producers\QueueHashSelector.cs" />
     <Compile Include="Configurations\ConfigurationExtensions.cs" />
+    <Compile Include="Protocols\GetMessageDetailRequest.cs" />
+    <Compile Include="Protocols\QueryMessageResponse.cs" />
+    <Compile Include="Protocols\QueryMessageRequest.cs" />
     <Compile Include="Protocols\RemoveQueueOffsetInfoRequest.cs" />
     <Compile Include="Protocols\TopicConsumeInfo.cs" />
     <Compile Include="Protocols\DisableQueueRequest.cs" />
@@ -125,11 +131,7 @@
     <Compile Include="Protocols\SendMessageResponse.cs" />
     <Compile Include="Protocols\QueryConsumerRequest.cs" />
     <Compile Include="Protocols\UpdateQueueOffsetRequest.cs" />
-    <Compile Include="Utils\ByteTypeData.cs" />
-    <Compile Include="Utils\ByteTypeDataUtils.cs" />
     <Compile Include="Utils\MessageUtils.cs" />
-    <Compile Include="Utils\StringTypeData.cs" />
-    <Compile Include="Utils\TypeData.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

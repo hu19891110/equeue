@@ -87,7 +87,7 @@ namespace EQueue.Clients.Consumers
             _handlingMessageDict = new ConcurrentDictionary<long, ConsumingMessage>();
             _taskIds = new List<int>();
             _taskFactory = new TaskFactory(new LimitedConcurrencyLevelTaskScheduler(Setting.ConsumeThreadMaxCount));
-            _remotingClient = new SocketRemotingClient(null, Setting.BrokerConsumerIPEndPoint, this);
+            _remotingClient = new SocketRemotingClient(null, Setting.BrokerConsumerIPEndPoint, null, this);
             _binarySerializer = ObjectContainer.Resolve<IBinarySerializer>();
             _scheduleService = ObjectContainer.Resolve<IScheduleService>();
             _allocateMessageQueueStragegy = ObjectContainer.Resolve<IAllocateMessageQueueStrategy>();
@@ -178,7 +178,8 @@ namespace EQueue.Clients.Consumers
                     MessageQueue = pullRequest.MessageQueue,
                     QueueOffset = pullRequest.NextConsumeOffset,
                     PullMessageBatchSize = Setting.PullMessageBatchSize,
-                    SuspendPullRequestMilliseconds = Setting.SuspendPullRequestMilliseconds
+                    SuspendPullRequestMilliseconds = Setting.SuspendPullRequestMilliseconds,
+                    ConsumeFromWhere = Setting.ConsumeFromWhere
                 };
                 var data = _binarySerializer.Serialize(request);
                 var remotingRequest = new RemotingRequest((int)RequestCode.PullMessage, data);
@@ -213,7 +214,7 @@ namespace EQueue.Clients.Consumers
                         {
                             var oldConsumeOffset = pullRequest.NextConsumeOffset;
                             pullRequest.NextConsumeOffset = response.NextOffset.Value;
-                            _logger.DebugFormat("Updated queue next consume offset. topic:{0}, queueId:{1}, old offset:{2}, new offset:{3}", pullRequest.MessageQueue.Topic, pullRequest.MessageQueue.QueueId, oldConsumeOffset, pullRequest.NextConsumeOffset);
+                            _logger.InfoFormat("Reset queue next consume offset. topic:{0}, queueId:{1}, old offset:{2}, new offset:{3}", pullRequest.MessageQueue.Topic, pullRequest.MessageQueue.QueueId, oldConsumeOffset, pullRequest.NextConsumeOffset);
                         }
 
                         if (_stoped) return;
@@ -393,7 +394,7 @@ namespace EQueue.Clients.Consumers
                 {
                     pullRequest.ProcessQueue.IsDropped = true;
                     PersistOffset(pullRequest);
-                    _logger.DebugFormat("Dropped pull request, consumerId:{0}, group:{1}, topic={2}, queueId={3}", Id, GroupName, pullRequest.MessageQueue.Topic, pullRequest.MessageQueue.QueueId);
+                    _logger.InfoFormat("Dropped pull request, consumerId:{0}, group:{1}, topic={2}, queueId={3}", Id, GroupName, pullRequest.MessageQueue.Topic, pullRequest.MessageQueue.QueueId);
                 }
             }
 
@@ -408,7 +409,7 @@ namespace EQueue.Clients.Consumers
                     if (_pullRequestDict.TryAdd(key, request))
                     {
                         SchedulePullRequest(request);
-                        _logger.DebugFormat("Added pull request, consumerId:{0}, group:{1}, topic={2}, queueId={3}", Id, GroupName, request.MessageQueue.Topic, request.MessageQueue.QueueId);
+                        _logger.InfoFormat("Added pull request, consumerId:{0}, group:{1}, topic={2}, queueId={3}", Id, GroupName, request.MessageQueue.Topic, request.MessageQueue.QueueId);
                     }
                 }
             }
