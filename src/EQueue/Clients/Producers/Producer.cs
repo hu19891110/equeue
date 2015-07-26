@@ -5,11 +5,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using ECommon.Components;
+using ECommon.Extensions;
 using ECommon.Logging;
 using ECommon.Remoting;
-using ECommon.Remoting.Exceptions;
 using ECommon.Scheduling;
-using ECommon.Serializing;
 using ECommon.Socketing;
 using ECommon.Utilities;
 using EQueue.Protocols;
@@ -23,7 +22,6 @@ namespace EQueue.Clients.Producers
         private readonly ConcurrentDictionary<string, IList<int>> _topicQueueIdsDict;
         private readonly IScheduleService _scheduleService;
         private readonly SocketRemotingClient _remotingClient;
-        private readonly IBinarySerializer _binarySerializer;
         private readonly IQueueSelector _queueSelector;
         private readonly ILogger _logger;
         private readonly List<int> _taskIds;
@@ -44,9 +42,8 @@ namespace EQueue.Clients.Producers
             _lockObject = new object();
             _taskIds = new List<int>();
             _topicQueueIdsDict = new ConcurrentDictionary<string, IList<int>>();
-            _remotingClient = new SocketRemotingClient(null, Setting.BrokerProducerIPEndPoint, null, this);
+            _remotingClient = new SocketRemotingClient(Setting.BrokerProducerIPEndPoint, null, this);
             _scheduleService = ObjectContainer.Resolve<IScheduleService>();
-            _binarySerializer = ObjectContainer.Resolve<IBinarySerializer>();
             _queueSelector = ObjectContainer.Resolve<IQueueSelector>();
             _logger = ObjectContainer.Resolve<ILoggerFactory>().Create(GetType().FullName);
         }
@@ -63,60 +60,51 @@ namespace EQueue.Clients.Producers
             _logger.InfoFormat("Shutdown, producerId:{0}", Id);
             return this;
         }
-        public SendResult Send(Message message, object routingKey)
+        public SendResult Send(Message message, object routingKey, int timeoutMilliseconds = 30000)
         {
-            var currentRoutingKey = GetStringRoutingKey(routingKey);
-            var queueIds = GetTopicQueueIds(message.Topic);
-            var queueId = _queueSelector.SelectQueueId(queueIds, message, currentRoutingKey);
-            var remotingRequest = BuildSendMessageRequest(message, queueId, currentRoutingKey);
-            var remotingResponse = _remotingClient.InvokeSync(remotingRequest, Setting.SendMessageTimeoutMilliseconds);
-            var response = _binarySerializer.Deserialize<SendMessageResponse>(remotingResponse.Body);
-            return new SendResult(SendStatus.Success, response.MessageOffset, response.MessageQueue, response.QueueOffset);
-        }
-        public Task<SendResult> SendAsync(Message message, object routingKey)
-        {
-            var currentRoutingKey = GetStringRoutingKey(routingKey);
-            var queueIds = GetTopicQueueIds(message.Topic);
-            var queueId = _queueSelector.SelectQueueId(queueIds, message, currentRoutingKey);
-            var remotingRequest = BuildSendMessageRequest(message, queueId, currentRoutingKey);
-            var taskCompletionSource = new TaskCompletionSource<SendResult>();
-            _remotingClient.InvokeAsync(remotingRequest, Setting.SendMessageTimeoutMilliseconds).ContinueWith((requestTask) =>
+            var sendResult = SendAsync(message, routingKey, timeoutMilliseconds).WaitResult<SendResult>(timeoutMilliseconds + 1000);
+            if (sendResult == null)
             {
-                if (requestTask.Exception != null && requestTask.Exception.InnerExceptions.Count > 0)
+                sendResult = new SendResult(SendStatus.Timeout, string.Format("Send message timeout, message: {0}, routingKey: {1}, timeoutMilliseconds: {2}", message, routingKey, timeoutMilliseconds));
+            }
+            return sendResult;
+        }
+        public async Task<SendResult> SendAsync(Message message, object routingKey, int timeoutMilliseconds = 30000)
+        {
+            Ensure.NotNull(message, "message");
+
+            var currentRoutingKey = GetStringRoutingKey(routingKey);
+            var queueIds = GetTopicQueueIds(message.Topic);
+            var queueId = _queueSelector.SelectQueueId(queueIds, message, currentRoutingKey);
+            if (queueId < 0)
+            {
+                throw new Exception(string.Format("No available routing queue for topic [{0}].", message.Topic));
+            }
+            var remotingRequest = BuildSendMessageRequest(message, queueId, currentRoutingKey);
+
+            try
+            {
+                var remotingResponse = await _remotingClient.InvokeAsync(remotingRequest, timeoutMilliseconds).ConfigureAwait(false);
+
+                if (remotingResponse == null)
                 {
-                    if (requestTask.Exception.InnerExceptions.First() is RemotingTimeoutException)
-                    {
-                        taskCompletionSource.SetResult(new SendResult(SendStatus.Timeout, requestTask.Exception.InnerExceptions[0].Message));
-                    }
-                    else
-                    {
-                        taskCompletionSource.SetResult(new SendResult(SendStatus.Failed, requestTask.Exception.InnerExceptions[0].Message));
-                    }
-                    return;
+                    return new SendResult(SendStatus.Timeout, string.Format("Send message timeout, message: {0}, routingKey: {1}, timeoutMilliseconds: {2}", message, routingKey, timeoutMilliseconds));
                 }
 
-                var remotingResponse = requestTask.Result;
-                if (remotingResponse != null)
+                if (remotingResponse.Code == (int)ResponseCode.Success)
                 {
-                    var response = _binarySerializer.Deserialize<SendMessageResponse>(remotingResponse.Body);
-                    var result = new SendResult(SendStatus.Success, response.MessageOffset, response.MessageQueue, response.QueueOffset);
-                    taskCompletionSource.SetResult(result);
+                    var response = Encoding.UTF8.GetString(remotingResponse.Body).Split(':');
+                    return new SendResult(SendStatus.Success, response[2], long.Parse(response[0]), new MessageQueue(message.Topic, queueId), long.Parse(response[1]));
                 }
                 else
                 {
-                    var errorMessage = "Unknown error occurred when sending message to broker.";
-                    if (!requestTask.IsCompleted)
-                    {
-                        errorMessage = "Send message to broker timeout.";
-                    }
-                    else if (requestTask.IsFaulted)
-                    {
-                        errorMessage = requestTask.Exception.Message;
-                    }
-                    taskCompletionSource.SetResult(new SendResult(SendStatus.Failed, errorMessage));
+                    return new SendResult(SendStatus.Failed, Encoding.UTF8.GetString(remotingResponse.Body));
                 }
-            });
-            return taskCompletionSource.Task;
+            }
+            catch (Exception ex)
+            {
+                return new SendResult(SendStatus.Failed, ex.Message);
+            }
         }
 
         private string GetStringRoutingKey(object routingKey)

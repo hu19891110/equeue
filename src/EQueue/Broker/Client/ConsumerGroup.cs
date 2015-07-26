@@ -129,7 +129,7 @@ namespace EQueue.Broker.Client
             {
                 var channelRemotingAddress = entry.Key;
                 var clientChannel = entry.Value;
-                if (clientChannel.IsTimeout(_consumerManager.BrokerController.Setting.ConsumerExpiredTimeout))
+                if (clientChannel.IsTimeout(BrokerController.Instance.Setting.ConsumerExpiredTimeout))
                 {
                     RemoveConsumer(channelRemotingAddress);
                 }
@@ -146,6 +146,11 @@ namespace EQueue.Broker.Client
         public IEnumerable<string> QueryConsumerIdsForTopic(string topic)
         {
             return _consumerSubscriptionTopicDict.Where(x => x.Value.Any(y => y.Contains(topic))).Select(z => z.Key);
+        }
+        public bool IsConsumerExistForQueue(string topic, int queueId)
+        {
+            var key = string.Format("{0}-{1}", topic, queueId);
+            return _consumerConsumingQueueDict.Values.Any(x => x.Any(y => y == key));
         }
         public IEnumerable<string> GetConsumingQueue(string consumerId)
         {

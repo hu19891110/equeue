@@ -2,7 +2,6 @@
 using System.Linq;
 using System.Threading;
 using ECommon.Extensions;
-using EQueue.Protocols;
 
 namespace EQueue.Broker
 {
@@ -14,19 +13,6 @@ namespace EQueue.Broker
         public string Topic { get; private set; }
         public int QueueId { get; private set; }
         public long CurrentOffset { get { return _currentOffset; } }
-        public long GetMessageCount()
-        {
-            return _queueItemDict.Count;
-        }
-        public long GetMessageRealCount()
-        {
-            var minOffset = GetMinQueueOffset();
-            if (minOffset == null)
-            {
-                return 0L;
-            }
-            return _currentOffset - minOffset.Value + 1;
-        }
         public QueueStatus Status { get; private set; }
 
         public Queue(string topic, int queueId)
@@ -36,6 +22,19 @@ namespace EQueue.Broker
             Status = QueueStatus.Normal;
         }
 
+        public long GetMessageCount()
+        {
+            return _queueItemDict.Count;
+        }
+        public long GetMessageRealCount()
+        {
+            var minOffset = GetMinQueueOffset();
+            if (minOffset == -1L)
+            {
+                return 0L;
+            }
+            return _currentOffset - minOffset + 1;
+        }
         public void Enable()
         {
             Status = QueueStatus.Normal;
@@ -63,16 +62,16 @@ namespace EQueue.Broker
         {
             _queueItemDict[queueOffset] = messageOffset;
         }
-        public long? GetMinQueueOffset()
+        public long GetMinQueueOffset()
         {
-            long? minOffset = null;
+            long minOffset = -1;
             foreach (var key in _queueItemDict.Keys)
             {
-                if (minOffset == null)
+                if (minOffset == -1)
                 {
                     minOffset = key;
                 }
-                else if (key < minOffset.Value)
+                else if (key < minOffset)
                 {
                     minOffset = key;
                 }
@@ -88,21 +87,25 @@ namespace EQueue.Broker
             }
             return -1;
         }
-        public long RemoveConsumedQueueIndex(long maxConsumedQueueOffset)
+        public void RemoveQueueOffset(long queueOffset)
+        {
+            _queueItemDict.Remove(queueOffset);
+        }
+        public long RemoveAllPreviousQueueIndex(long maxAllowToRemoveQueueOffset)
         {
             var totalRemovedCount = 0L;
-            var allRemoveQueueOffsets = _queueItemDict.Keys.Where(key => key <= maxConsumedQueueOffset);
-            foreach (var consumedQueueOffset in allRemoveQueueOffsets)
+            var allPreviousQueueOffsets = _queueItemDict.Keys.Where(key => key <= maxAllowToRemoveQueueOffset);
+            foreach (var queueOffset in allPreviousQueueOffsets)
             {
                 long messageOffset;
-                if (_queueItemDict.TryRemove(consumedQueueOffset, out messageOffset))
+                if (_queueItemDict.TryRemove(queueOffset, out messageOffset))
                 {
                     totalRemovedCount++;
                 }
             }
             return totalRemovedCount;
         }
-        public long RemoveLastQueueIndex(long requireRemoveCount)
+        public long RemoveRequiredQueueIndexFromLast(long requireRemoveCount)
         {
             var queueOffset = _queueItemDict.Keys.LastOrDefault();
             var totalRemovedCount = 0L;

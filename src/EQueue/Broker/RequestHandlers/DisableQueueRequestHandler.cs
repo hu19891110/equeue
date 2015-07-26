@@ -8,19 +8,19 @@ namespace EQueue.Broker.Processors
     public class DisableQueueRequestHandler : IRequestHandler
     {
         private IBinarySerializer _binarySerializer;
-        private IMessageService _messageService;
+        private IQueueService _queueService;
 
         public DisableQueueRequestHandler()
         {
             _binarySerializer = ObjectContainer.Resolve<IBinarySerializer>();
-            _messageService = ObjectContainer.Resolve<IMessageService>();
+            _queueService = ObjectContainer.Resolve<IQueueService>();
         }
 
-        public RemotingResponse HandleRequest(IRequestHandlerContext context, RemotingRequest request)
+        public RemotingResponse HandleRequest(IRequestHandlerContext context, RemotingRequest remotingRequest)
         {
-            var disableQueueRequest = _binarySerializer.Deserialize<DisableQueueRequest>(request.Body);
-            _messageService.DisableQueue(disableQueueRequest.Topic, disableQueueRequest.QueueId);
-            return new RemotingResponse((int)ResponseCode.Success, request.Sequence, new byte[1] { 1 });
+            var disableQueueRequest = _binarySerializer.Deserialize<DisableQueueRequest>(remotingRequest.Body);
+            _queueService.DisableQueue(disableQueueRequest.Topic, disableQueueRequest.QueueId);
+            return new RemotingResponse((int)ResponseCode.Success, remotingRequest.Sequence, new byte[1] { 1 });
         }
     }
 }

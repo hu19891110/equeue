@@ -23,6 +23,22 @@ namespace EQueue.Broker
         public void Start() { }
         public void Shutdown() { }
 
+        public int GetConsumerGroupCount()
+        {
+            return _groupQueueOffsetDict.Keys.Count;
+        }
+        public void DeleteQueueOffset(string topic, int queueId)
+        {
+            var key = string.Format("{0}-{1}", topic, queueId);
+            foreach (var groupEntry in _groupQueueOffsetDict)
+            {
+                long offset;
+                if (groupEntry.Value.TryRemove(key, out offset))
+                {
+                    _logger.DebugFormat("Deleted queue offset, topic:{0}, queueId:{1}, consumer group:{2}, consumedOffset:{3}", topic, queueId, groupEntry.Key, offset);
+                }
+            }
+        }
         public void UpdateQueueOffset(string topic, int queueId, long offset, string group)
         {
             var queueOffsetDict = _groupQueueOffsetDict.GetOrAdd(group, new ConcurrentDictionary<string, long>());
@@ -65,15 +81,7 @@ namespace EQueue.Broker
 
             return minOffset;
         }
-        public void RemoveQueueOffset(string topic, int queueId)
-        {
-            var key = string.Format("{0}-{1}", topic, queueId);
-            foreach (var groupEntry in _groupQueueOffsetDict)
-            {
-                groupEntry.Value.Remove(key);
-            }
-        }
-        public void RemoveQueueOffset(string consumerGroup, string topic, int queueId)
+        public void DeleteQueueOffset(string consumerGroup, string topic, int queueId)
         {
             ConcurrentDictionary<string, long> queueOffsetDict;
             if (_groupQueueOffsetDict.TryGetValue(consumerGroup, out queueOffsetDict))
@@ -85,6 +93,10 @@ namespace EQueue.Broker
                     _logger.DebugFormat("Remove queue offset success, topic:{0}, queueId:{1}, consumer group:{2}", topic, queueId, consumerGroup);
                 }
             }
+        }
+        public IEnumerable<QueueConsumedOffset> GetQueueConsumedOffsets()
+        {
+            return new QueueConsumedOffset[0];
         }
         public IEnumerable<TopicConsumeInfo> QueryTopicConsumeInfos(string groupName, string topic)
         {

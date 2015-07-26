@@ -1,10 +1,14 @@
 ﻿using System;
+using System.Configuration;
+using System.Net;
 using ECommon.Autofac;
 using ECommon.Configurations;
 using ECommon.JsonNet;
 using ECommon.Log4Net;
+using ECommon.Utilities;
 using EQueue.Broker;
 using EQueue.Configurations;
+using ECommonConfiguration = ECommon.Configurations.Configuration;
 
 namespace QuickStart.BrokerServer
 {
@@ -13,33 +17,27 @@ namespace QuickStart.BrokerServer
         static void Main(string[] args)
         {
             InitializeEQueue();
-            new BrokerController().Start();
+
+            var bindingIP = ConfigurationManager.AppSettings["BindingAddress"];
+            var brokerEndPoint = string.IsNullOrEmpty(bindingIP) ? SocketUtils.GetLocalIPV4() : IPAddress.Parse(bindingIP);
+            var setting = new BrokerSetting {
+                ProducerIPEndPoint = new IPEndPoint(brokerEndPoint, 5000),
+                ConsumerIPEndPoint = new IPEndPoint(brokerEndPoint, 5001),
+                AdminIPEndPoint = new IPEndPoint(brokerEndPoint, 5002)
+            };
+            BrokerController.Create(setting).Start();
             Console.ReadLine();
         }
 
         static void InitializeEQueue()
         {
-            var connectionString = @"Data Source=(localdb)\Projects;Integrated Security=true;Initial Catalog=EQueue;Connect Timeout=30;Min Pool Size=10;Max Pool Size=100";
-            var messageStoreSetting = new SqlServerMessageStoreSetting
-            {
-                ConnectionString = connectionString,
-                DeleteMessageHourOfDay = -1,
-                DeleteMessageInterval = 1000 * 30
-            };
-            var offsetManagerSetting = new SqlServerOffsetManagerSetting
-            {
-                ConnectionString = connectionString
-            };
-
-            Configuration
+            ECommonConfiguration
                 .Create()
                 .UseAutofac()
                 .RegisterCommonComponents()
                 .UseLog4Net()
                 .UseJsonNet()
-                .RegisterEQueueComponents()
-                .UseSqlServerMessageStore(messageStoreSetting)
-                .UseSqlServerOffsetManager(offsetManagerSetting);
+                .RegisterEQueueComponents();
         }
     }
 }

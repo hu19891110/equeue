@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using ECommon.Components;
 using ECommon.Logging;
 using ECommon.Remoting;
 using ECommon.Serializing;
+using EQueue.Broker.Client;
 using EQueue.Broker.LongPolling;
 using EQueue.Protocols;
 
@@ -12,74 +14,80 @@ namespace EQueue.Broker.Processors
 {
     public class PullMessageRequestHandler : IRequestHandler
     {
-        private BrokerController _brokerController;
+        private ConsumerManager _consumerManager;
+        private SuspendedPullRequestManager _suspendedPullRequestManager;
         private IMessageService _messageService;
+        private IQueueService _queueService;
         private IOffsetManager _offsetManager;
         private IBinarySerializer _binarySerializer;
         private ILogger _logger;
-        private byte[] _emptyResponseData;
+        private readonly byte[] EmptyResponseData;
 
-        public PullMessageRequestHandler(BrokerController brokerController)
+        public PullMessageRequestHandler()
         {
-            _brokerController = brokerController;
+            _consumerManager = ObjectContainer.Resolve<ConsumerManager>();
+            _suspendedPullRequestManager = ObjectContainer.Resolve<SuspendedPullRequestManager>();
             _messageService = ObjectContainer.Resolve<IMessageService>();
+            _queueService = ObjectContainer.Resolve<IQueueService>();
             _offsetManager = ObjectContainer.Resolve<IOffsetManager>();
             _binarySerializer = ObjectContainer.Resolve<IBinarySerializer>();
             _logger = ObjectContainer.Resolve<ILoggerFactory>().Create(GetType().FullName);
-            _emptyResponseData = _binarySerializer.Serialize(new PullMessageResponse(new QueueMessage[0]));
+            EmptyResponseData = new byte[0];
         }
 
-        public RemotingResponse HandleRequest(IRequestHandlerContext context, RemotingRequest request)
+        public RemotingResponse HandleRequest(IRequestHandlerContext context, RemotingRequest remotingRequest)
         {
-            var pullMessageRequest = _binarySerializer.Deserialize<PullMessageRequest>(request.Body);
-            var topic = pullMessageRequest.MessageQueue.Topic;
-            var queueId = pullMessageRequest.MessageQueue.QueueId;
-            var pullOffset = pullMessageRequest.QueueOffset;
+            var request = DeserializePullMessageRequest(remotingRequest.Body);
+            var topic = request.MessageQueue.Topic;
+            var queueId = request.MessageQueue.QueueId;
+            var pullOffset = request.QueueOffset;
 
             //如果消费者第一次过来拉取消息，则计算下一个应该拉取的位置，并返回给消费者
             if (pullOffset < 0)
             {
-                var nextConsumeOffset = GetNextConsumeOffset(topic, queueId, pullMessageRequest.ConsumerGroup, pullMessageRequest.ConsumeFromWhere);
-                return BuildNextOffsetResetResponse(request.Sequence, nextConsumeOffset);
+                var nextConsumeOffset = GetNextConsumeOffset(topic, queueId, request.ConsumerGroup, request.ConsumeFromWhere);
+                return BuildNextOffsetResetResponse(remotingRequest.Sequence, nextConsumeOffset);
             }
 
             //尝试拉取消息
-            var messages = _messageService.GetMessages(topic, queueId, pullOffset, pullMessageRequest.PullMessageBatchSize);
+            var messages = _messageService.GetMessages(topic, queueId, pullOffset, request.PullMessageBatchSize);
 
             //如果消息存在，则返回消息
             if (messages.Count() > 0)
             {
-                return BuildFoundResponse(request.Sequence, messages);
+                return BuildFoundResponse(remotingRequest.Sequence, messages);
             }
 
             //消息不存在，如果挂起时间大于0，则挂起请求
-            if (pullMessageRequest.SuspendPullRequestMilliseconds > 0)
+            if (request.SuspendPullRequestMilliseconds > 0)
             {
                 var pullRequest = new PullRequest(
-                    request.Sequence,
-                    pullMessageRequest,
+                    remotingRequest.Sequence,
+                    request,
                     context,
                     DateTime.Now,
-                    pullMessageRequest.SuspendPullRequestMilliseconds,
+                    request.SuspendPullRequestMilliseconds,
                     ExecutePullRequest,
                     ExecutePullRequest,
                     ExecuteReplacedPullRequest);
-                _brokerController.SuspendedPullRequestManager.SuspendPullRequest(pullRequest);
+                _suspendedPullRequestManager.SuspendPullRequest(pullRequest);
                 return null;
             }
 
-            //获取队列的第一个消息以及最后一个消息的offset
-            var queueMinOffset = _messageService.GetQueueMinOffset(topic, queueId);
-            var queueCurrentOffset = _messageService.GetQueueCurrentOffset(topic, queueId);
+            var queueMinOffset = _queueService.GetQueueMinOffset(topic, queueId);
+            var queueCurrentOffset = _queueService.GetQueueCurrentOffset(topic, queueId);
 
-            //如果pullOffset比队列的第一个消息的offset还要小或者比队列的最后一个消息的offset+1还要大，则将pullOffset重置为第一个消息的offset
-            if (pullOffset < queueMinOffset || pullOffset > queueCurrentOffset + 1)
+            if (pullOffset < queueMinOffset)
             {
-                return BuildNextOffsetResetResponse(request.Sequence, queueMinOffset);
+                return BuildNextOffsetResetResponse(remotingRequest.Sequence, queueMinOffset);
+            }
+            else if (pullOffset > queueCurrentOffset + 1)
+            {
+                return BuildNextOffsetResetResponse(remotingRequest.Sequence, queueCurrentOffset + 1);
             }
             else
             {
-                return BuildNoNewMessageResponse(request.Sequence);
+                return BuildNoNewMessageResponse(remotingRequest.Sequence);
             }
         }
 
@@ -103,14 +111,16 @@ namespace EQueue.Broker.Processors
                 return;
             }
 
-            //获取队列的第一个消息以及最后一个消息的offset
-            var queueMinOffset = _messageService.GetQueueMinOffset(topic, queueId);
-            var queueCurrentOffset = _messageService.GetQueueCurrentOffset(topic, queueId);
+            var queueMinOffset = _queueService.GetQueueMinOffset(topic, queueId);
+            var queueCurrentOffset = _queueService.GetQueueCurrentOffset(topic, queueId);
 
-            //如果pullOffset比队列的第一个消息的offset还要小或者比队列的最后一个消息的offset+1还要大，则将pullOffset重置为第一个消息的offset
-            if (pullOffset < queueMinOffset || pullOffset > queueCurrentOffset + 1)
+            if (pullOffset < queueMinOffset)
             {
                 SendRemotingResponse(pullRequest, BuildNextOffsetResetResponse(pullRequest.RemotingRequestSequence, queueMinOffset));
+            }
+            else if (pullOffset > queueCurrentOffset + 1)
+            {
+                SendRemotingResponse(pullRequest, BuildNextOffsetResetResponse(pullRequest.RemotingRequestSequence, queueCurrentOffset + 1));
             }
             else
             {
@@ -119,31 +129,32 @@ namespace EQueue.Broker.Processors
         }
         private void ExecuteReplacedPullRequest(PullRequest pullRequest)
         {
-            if (IsPullRequestValid(pullRequest))
+            if (!IsPullRequestValid(pullRequest))
             {
-                SendRemotingResponse(pullRequest, BuildIgnoredResponse(pullRequest.RemotingRequestSequence));
+                return;
             }
+            SendRemotingResponse(pullRequest, BuildIgnoredResponse(pullRequest.RemotingRequestSequence));
         }
         private bool IsPullRequestValid(PullRequest pullRequest)
         {
-            var consumerGroup = _brokerController.ConsumerManager.GetConsumerGroup(pullRequest.PullMessageRequest.ConsumerGroup);
+            var consumerGroup = _consumerManager.GetConsumerGroup(pullRequest.PullMessageRequest.ConsumerGroup);
             return consumerGroup != null && consumerGroup.IsConsumerActive(pullRequest.RequestHandlerContext.Channel.RemoteEndPoint.ToString());
         }
         private RemotingResponse BuildNoNewMessageResponse(long requestSequence)
         {
-            return new RemotingResponse((int)PullStatus.NoNewMessage, requestSequence, _emptyResponseData);
+            return new RemotingResponse((int)PullStatus.NoNewMessage, requestSequence, EmptyResponseData);
         }
         private RemotingResponse BuildIgnoredResponse(long requestSequence)
         {
-            return new RemotingResponse((int)PullStatus.Ignored, requestSequence, _emptyResponseData);
+            return new RemotingResponse((int)PullStatus.Ignored, requestSequence, EmptyResponseData);
         }
         private RemotingResponse BuildNextOffsetResetResponse(long requestSequence, long nextOffset)
         {
-            return new RemotingResponse((int)PullStatus.NextOffsetReset, requestSequence, _binarySerializer.Serialize(new PullMessageResponse(new QueueMessage[0], nextOffset)));
+            return new RemotingResponse((int)PullStatus.NextOffsetReset, requestSequence, BitConverter.GetBytes(nextOffset));
         }
         private RemotingResponse BuildFoundResponse(long requestSequence, IEnumerable<QueueMessage> messages)
         {
-            return new RemotingResponse((int)PullStatus.Found, requestSequence, _binarySerializer.Serialize(new PullMessageResponse(messages)));
+            return new RemotingResponse((int)PullStatus.Found, requestSequence, _binarySerializer.Serialize(messages));
         }
         private void SendRemotingResponse(PullRequest pullRequest, RemotingResponse remotingResponse)
         {
@@ -154,12 +165,13 @@ namespace EQueue.Broker.Processors
             var lastConsumedQueueOffset = _offsetManager.GetQueueOffset(topic, queueId, consumerGroup);
             if (lastConsumedQueueOffset >= 0)
             {
-                return lastConsumedQueueOffset + 1;
+                var queueCurrentOffset = _queueService.GetQueueCurrentOffset(topic, queueId);
+                return queueCurrentOffset < lastConsumedQueueOffset ? queueCurrentOffset + 1 : lastConsumedQueueOffset + 1;
             }
 
             if (consumerFromWhere == ConsumeFromWhere.FirstOffset)
             {
-                var queueMinOffset = _messageService.GetQueueMinOffset(topic, queueId);
+                var queueMinOffset = _queueService.GetQueueMinOffset(topic, queueId);
                 if (queueMinOffset < 0)
                 {
                     queueMinOffset = 0;
@@ -168,7 +180,7 @@ namespace EQueue.Broker.Processors
             }
             else
             {
-                var queueCurrentOffset = _messageService.GetQueueCurrentOffset(topic, queueId);
+                var queueCurrentOffset = _queueService.GetQueueCurrentOffset(topic, queueId);
                 if (queueCurrentOffset < 0)
                 {
                     queueCurrentOffset = 0;
@@ -178,6 +190,13 @@ namespace EQueue.Broker.Processors
                     queueCurrentOffset++;
                 }
                 return queueCurrentOffset;
+            }
+        }
+        private static PullMessageRequest DeserializePullMessageRequest(byte[] data)
+        {
+            using (var stream = new MemoryStream(data))
+            {
+                return PullMessageRequest.ReadFromStream(stream);
             }
         }
     }

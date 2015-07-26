@@ -10,33 +10,32 @@ namespace EQueue.Broker.Processors
     public class QueryTopicQueueInfoRequestHandler : IRequestHandler
     {
         private IBinarySerializer _binarySerializer;
-        private IMessageService _messageService;
+        private IQueueService _queueService;
         private IOffsetManager _offsetManager;
 
         public QueryTopicQueueInfoRequestHandler()
         {
             _binarySerializer = ObjectContainer.Resolve<IBinarySerializer>();
-            _messageService = ObjectContainer.Resolve<IMessageService>();
+            _queueService = ObjectContainer.Resolve<IQueueService>();
             _offsetManager = ObjectContainer.Resolve<IOffsetManager>();
         }
 
-        public RemotingResponse HandleRequest(IRequestHandlerContext context, RemotingRequest request)
+        public RemotingResponse HandleRequest(IRequestHandlerContext context, RemotingRequest remotingRequest)
         {
-            var queryTopicConsumeInfoRequest = _binarySerializer.Deserialize<QueryTopicQueueInfoRequest>(request.Body);
+            var request = _binarySerializer.Deserialize<QueryTopicQueueInfoRequest>(remotingRequest.Body);
             var topicQueueInfoList = new List<TopicQueueInfo>();
-            var topicList = !string.IsNullOrEmpty(queryTopicConsumeInfoRequest.Topic) ? new List<string> { queryTopicConsumeInfoRequest.Topic } : _messageService.GetAllTopics().ToList();
+            var topicList = !string.IsNullOrEmpty(request.Topic) ? new List<string> { request.Topic } : _queueService.GetAllTopics().ToList();
 
             foreach (var topic in topicList)
             {
-                var queues = _messageService.QueryQueues(topic).ToList();
+                var queues = _queueService.QueryQueues(topic).ToList();
                 foreach (var queue in queues)
                 {
-                    var queueMinOffset = queue.GetMinQueueOffset();
                     var topicQueueInfo = new TopicQueueInfo();
                     topicQueueInfo.Topic = queue.Topic;
                     topicQueueInfo.QueueId = queue.QueueId;
                     topicQueueInfo.QueueCurrentOffset = queue.CurrentOffset;
-                    topicQueueInfo.QueueMinOffset = queueMinOffset != null ? queueMinOffset.Value : -1L;
+                    topicQueueInfo.QueueMinOffset = queue.GetMinQueueOffset();
                     topicQueueInfo.QueueMessageCount = queue.GetMessageRealCount();
                     topicQueueInfo.QueueMaxConsumedOffset = _offsetManager.GetMinOffset(queue.Topic, queue.QueueId);
                     topicQueueInfo.Status = queue.Status;
@@ -45,7 +44,7 @@ namespace EQueue.Broker.Processors
             }
 
             var data = _binarySerializer.Serialize(topicQueueInfoList);
-            return new RemotingResponse((int)ResponseCode.Success, request.Sequence, data);
+            return new RemotingResponse((int)ResponseCode.Success, remotingRequest.Sequence, data);
         }
     }
 }

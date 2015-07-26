@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Text;
+using System.Threading.Tasks;
 using ECommon.Remoting;
 using ECommon.Serializing;
 using EQueue.Protocols;
@@ -15,13 +17,36 @@ namespace EQueue.AdminWeb
 
         public MessageService(IBinarySerializer binarySerializer)
         {
-            _remotingClient = new SocketRemotingClient("AdminClient", new IPEndPoint(Settings.BrokerAddress, Settings.BrokerPort));
+            _remotingClient = new SocketRemotingClient(new IPEndPoint(Settings.BrokerAddress, Settings.BrokerPort));
             _binarySerializer = binarySerializer;
         }
 
         public void Start()
         {
-            _remotingClient.Start();
+            Task.Factory.StartNew(() => _remotingClient.Start());
+        }
+        public BrokerStatisticInfo QueryBrokerStatisticInfo()
+        {
+            var remotingRequest = new RemotingRequest((int)RequestCode.QueryBrokerStatisticInfo, new byte[0]);
+            var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
+            if (remotingResponse.Code == (int)ResponseCode.Success)
+            {
+                return _binarySerializer.Deserialize<BrokerStatisticInfo>(remotingResponse.Body);
+            }
+            else
+            {
+                throw new Exception(string.Format("QueryBrokerStatisticInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+            }
+        }
+        public void CreateTopic(string topic, int initialQueueCount)
+        {
+            var requestData = _binarySerializer.Serialize(new CreateTopicRequest(topic, initialQueueCount));
+            var remotingRequest = new RemotingRequest((int)RequestCode.CreateTopic, requestData);
+            var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
+            if (remotingResponse.Code != (int)ResponseCode.Success)
+            {
+                throw new Exception(string.Format("CreateTopic failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+            }
         }
         public IEnumerable<TopicQueueInfo> GetTopicQueueInfo(string topic)
         {
@@ -34,7 +59,7 @@ namespace EQueue.AdminWeb
             }
             else
             {
-                throw new Exception(string.Format("QueryTopicQueueInfo has exception, topic:{0}", topic));
+                throw new Exception(string.Format("QueryTopicQueueInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
         public IEnumerable<ConsumerInfo> GetConsumerInfo(string group, string topic)
@@ -48,7 +73,7 @@ namespace EQueue.AdminWeb
             }
             else
             {
-                throw new Exception(string.Format("QueryConsumerInfo has exception, group:{0}, topic:{1}", group, topic));
+                throw new Exception(string.Format("QueryConsumerInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
         public IEnumerable<TopicConsumeInfo> GetTopicConsumeInfo(string group, string topic)
@@ -62,7 +87,7 @@ namespace EQueue.AdminWeb
             }
             else
             {
-                throw new Exception(string.Format("QueryTopicConsumeInfo has exception, group:{0}, topic:{1}", group, topic));
+                throw new Exception(string.Format("QueryTopicConsumeInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
         public void AddQueue(string topic)
@@ -72,7 +97,7 @@ namespace EQueue.AdminWeb
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
             if (remotingResponse.Code != (int)ResponseCode.Success)
             {
-                throw new Exception(string.Format("AddQueue has exception, topic:{0}", topic));
+                throw new Exception(string.Format("AddQueue failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
         public void RemoveQueue(string topic, int queueId)
@@ -82,7 +107,7 @@ namespace EQueue.AdminWeb
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
             if (remotingResponse.Code != (int)ResponseCode.Success)
             {
-                throw new Exception(string.Format("RemoveQueue has exception, topic:{0}", topic));
+                throw new Exception(string.Format("RemoveQueue failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
         public void EnableQueue(string topic, int queueId)
@@ -92,7 +117,7 @@ namespace EQueue.AdminWeb
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
             if (remotingResponse.Code != (int)ResponseCode.Success)
             {
-                throw new Exception(string.Format("EnableQueue has exception, topic:{0}", topic));
+                throw new Exception(string.Format("EnableQueue failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
         public void DisableQueue(string topic, int queueId)
@@ -102,7 +127,7 @@ namespace EQueue.AdminWeb
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
             if (remotingResponse.Code != (int)ResponseCode.Success)
             {
-                throw new Exception(string.Format("DisableQueue has exception, topic:{0}", topic));
+                throw new Exception(string.Format("DisableQueue failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
         public void RemoveQueueOffsetInfo(string consumerGroup, string topic, int queueId)
@@ -112,7 +137,7 @@ namespace EQueue.AdminWeb
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
             if (remotingResponse.Code != (int)ResponseCode.Success)
             {
-                throw new Exception(string.Format("RemoveQueueOffsetInfo has exception, topic:{0}", topic));
+                throw new Exception(string.Format("RemoveQueueOffsetInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
         public QueryMessageResponse QueryMessages(string topic, int? queueId, int? code, string routingKey, int pageIndex, int pageSize)
@@ -127,12 +152,12 @@ namespace EQueue.AdminWeb
             }
             else
             {
-                throw new Exception(string.Format("QueryMessage has exception, request:{0}", request));
+                throw new Exception(string.Format("QueryMessages failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
-        public QueueMessage GetMessageDetail(long messageOffset)
+        public QueueMessage GetMessageDetail(long? messageOffset, string messageId)
         {
-            var requestData = _binarySerializer.Serialize(new GetMessageDetailRequest(messageOffset));
+            var requestData = _binarySerializer.Serialize(new GetMessageDetailRequest(messageOffset, messageId));
             var remotingRequest = new RemotingRequest((int)RequestCode.GetMessageDetail, requestData);
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
             if (remotingResponse.Code == (int)ResponseCode.Success)
@@ -141,7 +166,7 @@ namespace EQueue.AdminWeb
             }
             else
             {
-                throw new Exception(string.Format("GetMessageDetail has exception, messageOffset:{0}", messageOffset));
+                throw new Exception(string.Format("GetMessageDetail failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
     }

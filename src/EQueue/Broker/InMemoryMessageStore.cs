@@ -7,6 +7,7 @@ using ECommon.Components;
 using ECommon.Extensions;
 using ECommon.Logging;
 using ECommon.Scheduling;
+using ECommon.Utilities;
 using EQueue.Protocols;
 
 namespace EQueue.Broker
@@ -14,18 +15,27 @@ namespace EQueue.Broker
     public class InMemoryMessageStore : IMessageStore
     {
         private readonly ConcurrentDictionary<long, QueueMessage> _messageDict = new ConcurrentDictionary<long, QueueMessage>();
-        private readonly ConcurrentDictionary<string, long> _queueOffsetDict = new ConcurrentDictionary<string, long>();
+        private readonly ConcurrentDictionary<string, long> _queueConsumedOffsetDict = new ConcurrentDictionary<string, long>();
         private readonly InMemoryMessageStoreSetting _setting;
         private readonly IScheduleService _scheduleService;
         private readonly ILogger _logger;
         private long _currentOffset = -1;
         private int _removeMessageFromMemoryTaskId;
 
+        public long CurrentMessageOffset
+        {
+            get { return _currentOffset; }
+        }
+        public long PersistedMessageOffset
+        {
+            get { return _currentOffset; }
+        }
         public bool SupportBatchLoadQueueIndex
         {
             get { return false; }
         }
 
+        public InMemoryMessageStore() : this(new InMemoryMessageStoreSetting()) { }
         public InMemoryMessageStore(InMemoryMessageStoreSetting setting)
         {
             _setting = setting;
@@ -33,7 +43,7 @@ namespace EQueue.Broker
             _logger = ObjectContainer.Resolve<ILoggerFactory>().Create(GetType().FullName);
         }
 
-        public void Recover(Action<long, string, int, long> messageRecoveredCallback) { }
+        public void Recover(IEnumerable<QueueConsumedOffset> queueConsumedOffsets, Action<long, string, int, long> messageRecoveredCallback) { }
         public void Start()
         {
             _removeMessageFromMemoryTaskId = _scheduleService.ScheduleTask("InMemoryMessageStore.RemoveConsumedMessagesFromMemory", RemoveConsumedMessagesFromMemory, _setting.RemoveMessageFromMemoryInterval, _setting.RemoveMessageFromMemoryInterval);
@@ -42,11 +52,25 @@ namespace EQueue.Broker
         {
             _scheduleService.ShutdownTask(_removeMessageFromMemoryTaskId);
         }
-        public QueueMessage StoreMessage(int queueId, long queueOffset, Message message, string routingKey)
+        public long GetNextMessageOffset()
         {
-            var nextOffset = GetNextOffset();
-            var queueMessage = new QueueMessage(message.Topic, message.Code, message.Body, nextOffset, queueId, queueOffset, DateTime.Now, routingKey);
-            _messageDict[nextOffset] = queueMessage;
+            return Interlocked.Increment(ref _currentOffset);
+        }
+        public QueueMessage StoreMessage(int queueId, long messageOffset, long queueOffset, Message message, string routingKey)
+        {
+            var queueMessage = new QueueMessage(
+                ObjectId.GenerateNewStringId(),
+                message.Topic,
+                message.Code,
+                message.Body,
+                messageOffset,
+                queueId,
+                queueOffset,
+                message.CreatedTime,
+                DateTime.Now,
+                DateTime.Now,
+                routingKey);
+            _messageDict[messageOffset] = queueMessage;
             return queueMessage;
         }
         public QueueMessage GetMessage(long offset)
@@ -58,10 +82,34 @@ namespace EQueue.Broker
             }
             return null;
         }
-        public void UpdateMaxAllowToDeleteQueueOffset(string topic, int queueId, long queueOffset)
+        public QueueMessage FindMessage(long? offset, string messageId)
+        {
+            var predicate = new Func<QueueMessage, bool>(x =>
+            {
+                var pass = true;
+                if (pass && offset != null)
+                {
+                    pass = x.MessageOffset == offset.Value;
+                }
+                if (!string.IsNullOrWhiteSpace(messageId))
+                {
+                    pass = x.MessageId == messageId;
+                }
+                return pass;
+            });
+            return _messageDict.Values.SingleOrDefault(predicate);
+        }
+        public void DeleteQueueMessage(string topic, int queueId)
         {
             var key = string.Format("{0}-{1}", topic, queueId);
-            _queueOffsetDict.AddOrUpdate(key, queueOffset, (currentKey, oldOffset) => queueOffset > oldOffset ? queueOffset : oldOffset);
+            var messages = _messageDict.Values.Where(x => x.Topic == topic && x.QueueId == queueId);
+            messages.ForEach(x => _messageDict.Remove(x.MessageOffset));
+            _queueConsumedOffsetDict.Remove(key);
+        }
+        public void UpdateConsumedQueueOffset(string topic, int queueId, long queueOffset)
+        {
+            var key = string.Format("{0}-{1}", topic, queueId);
+            _queueConsumedOffsetDict.AddOrUpdate(key, queueOffset, (currentKey, oldOffset) => queueOffset > oldOffset ? queueOffset : oldOffset);
         }
         public IDictionary<long, long> BatchLoadQueueIndex(string topic, int queueId, long startQueueOffset)
         {
@@ -103,15 +151,11 @@ namespace EQueue.Broker
             {
                 var key = string.Format("{0}-{1}", queueMessage.Topic, queueMessage.QueueId);
                 long maxAllowToDeleteQueueOffset;
-                if (_queueOffsetDict.TryGetValue(key, out maxAllowToDeleteQueueOffset) && queueMessage.QueueOffset <= maxAllowToDeleteQueueOffset)
+                if (_queueConsumedOffsetDict.TryGetValue(key, out maxAllowToDeleteQueueOffset) && queueMessage.QueueOffset <= maxAllowToDeleteQueueOffset)
                 {
                     _messageDict.Remove(queueMessage.MessageOffset);
                 }
             }
-        }
-        private long GetNextOffset()
-        {
-            return Interlocked.Increment(ref _currentOffset);
         }
     }
 }

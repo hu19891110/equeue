@@ -39,12 +39,13 @@
     <Reference Include="Dapper">
       <HintPath>..\packages\Dapper.1.38\lib\net45\Dapper.dll</HintPath>
     </Reference>
-    <Reference Include="ECommon, Version=1.4.0.0, Culture=neutral, processorArchitecture=MSIL">
+    <Reference Include="ECommon, Version=1.4.9.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\packages\ECommon.1.4.0\lib\net45\ECommon.dll</HintPath>
+      <HintPath>..\packages\ecommon.1.4.9\lib\net45\ECommon.dll</HintPath>
     </Reference>
-    <Reference Include="ECommon.Dapper">
-      <HintPath>..\packages\ECommon.Dapper.1.4.0\lib\net45\ECommon.Dapper.dll</HintPath>
+    <Reference Include="ECommon.Dapper, Version=1.4.2.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\packages\ECommon.Dapper.1.4.2\lib\net45\ECommon.Dapper.dll</HintPath>
     </Reference>
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="System" />
@@ -53,10 +54,18 @@
     <Reference Include="System.XML" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Broker\RequestHandlers\CreateTopicRequestHandler.cs" />
+    <Compile Include="Broker\SqlServerQueueStoreSetting.cs" />
+    <Compile Include="Broker\SqlServerQueueStore.cs" />
+    <Compile Include="Broker\InMemoryQueueStore.cs" />
+    <Compile Include="Broker\IQueueStore.cs" />
+    <Compile Include="Broker\IQueueService.cs" />
     <Compile Include="Broker\InMemoryMessageStoreSetting.cs" />
+    <Compile Include="Broker\QueueService.cs" />
     <Compile Include="Broker\RequestHandlers\DisableQueueRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\EnableQueueRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\GetMessageDetailRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\QueryBrokerStatisticInfoRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\QueryMessageRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\QueryTopicConsumeInfoRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\QueryConsumerRequestHandler.cs" />
@@ -108,6 +117,7 @@
     <Compile Include="Clients\Producers\QueueAverageSelector.cs" />
     <Compile Include="Clients\Producers\QueueHashSelector.cs" />
     <Compile Include="Configurations\ConfigurationExtensions.cs" />
+    <Compile Include="Protocols\CreateTopicRequest.cs" />
     <Compile Include="Protocols\GetMessageDetailRequest.cs" />
     <Compile Include="Protocols\QueryMessageResponse.cs" />
     <Compile Include="Protocols\QueryMessageRequest.cs" />
@@ -121,6 +131,8 @@
     <Compile Include="Protocols\QueryTopicQueueInfoRequest.cs" />
     <Compile Include="Protocols\QueryConsumerInfoRequest.cs" />
     <Compile Include="Protocols\ConsumerInfo.cs" />
+    <Compile Include="Protocols\BrokerStatisticInfo.cs" />
+    <Compile Include="Protocols\QueueConsumedOffset.cs" />
     <Compile Include="Protocols\TopicQueueInfo.cs" />
     <Compile Include="Protocols\QueueMessage.cs" />
     <Compile Include="Protocols\ConsumerData.cs" />
@@ -137,7 +149,6 @@
     <Compile Include="Protocols\PullMessageRequest.cs" />
     <Compile Include="Protocols\SendMessageRequest.cs" />
     <Compile Include="Protocols\ResponseCode.cs" />
-    <Compile Include="Protocols\PullMessageResponse.cs" />
     <Compile Include="Protocols\SendMessageResponse.cs" />
     <Compile Include="Protocols\QueryConsumerRequest.cs" />
     <Compile Include="Protocols\UpdateQueueOffsetRequest.cs" />

@@ -10,28 +10,30 @@ namespace EQueue.Broker.Processors
 {
     public class QueryConsumerInfoRequestHandler : IRequestHandler
     {
-        private BrokerController _brokerController;
         private IBinarySerializer _binarySerializer;
         private IOffsetManager _offsetManager;
+        private ConsumerManager _consumerManager;
+        private IQueueService _queueService;
 
-        public QueryConsumerInfoRequestHandler(BrokerController brokerController)
+        public QueryConsumerInfoRequestHandler()
         {
-            _brokerController = brokerController;
             _binarySerializer = ObjectContainer.Resolve<IBinarySerializer>();
             _offsetManager = ObjectContainer.Resolve<IOffsetManager>();
+            _consumerManager = ObjectContainer.Resolve<ConsumerManager>();
+            _queueService = ObjectContainer.Resolve<IQueueService>();
         }
 
-        public RemotingResponse HandleRequest(IRequestHandlerContext context, RemotingRequest request)
+        public RemotingResponse HandleRequest(IRequestHandlerContext context, RemotingRequest remotingRequest)
         {
-            var queryConsumerInfoRequest = _binarySerializer.Deserialize<QueryConsumerInfoRequest>(request.Body);
+            var request = _binarySerializer.Deserialize<QueryConsumerInfoRequest>(remotingRequest.Body);
             var consumerInfoList = new List<ConsumerInfo>();
 
-            if (!string.IsNullOrEmpty(queryConsumerInfoRequest.GroupName))
+            if (!string.IsNullOrEmpty(request.GroupName))
             {
-                var consumerGroups = _brokerController.ConsumerManager.QueryConsumerGroup(queryConsumerInfoRequest.GroupName);
+                var consumerGroups = _consumerManager.QueryConsumerGroup(request.GroupName);
                 foreach (var consumerGroup in consumerGroups)
                 {
-                    foreach (var topicConsumeInfo in GetConsumerInfoForGroup(consumerGroup, queryConsumerInfoRequest.Topic))
+                    foreach (var topicConsumeInfo in GetConsumerInfoForGroup(consumerGroup, request.Topic))
                     {
                         consumerInfoList.Add(topicConsumeInfo);
                     }
@@ -39,10 +41,10 @@ namespace EQueue.Broker.Processors
             }
             else
             {
-                var consumerGroups = _brokerController.ConsumerManager.GetAllConsumerGroups();
+                var consumerGroups = _consumerManager.GetAllConsumerGroups();
                 foreach (var consumerGroup in consumerGroups)
                 {
-                    foreach (var topicConsumeInfo in GetConsumerInfoForGroup(consumerGroup, queryConsumerInfoRequest.Topic))
+                    foreach (var topicConsumeInfo in GetConsumerInfoForGroup(consumerGroup, request.Topic))
                     {
                         consumerInfoList.Add(topicConsumeInfo);
                     }
@@ -50,7 +52,7 @@ namespace EQueue.Broker.Processors
             }
 
             var data = _binarySerializer.Serialize(consumerInfoList);
-            return new RemotingResponse((int)ResponseCode.Success, request.Sequence, data);
+            return new RemotingResponse((int)ResponseCode.Success, remotingRequest.Sequence, data);
         }
 
         private IEnumerable<ConsumerInfo> GetConsumerInfoForGroup(ConsumerGroup consumerGroup, string currentTopic)
@@ -106,12 +108,15 @@ namespace EQueue.Broker.Processors
         }
         private ConsumerInfo BuildConsumerInfo(string group, string consumerId, string topic, int queueId)
         {
+            var queueCurrentOffset = _queueService.GetQueueCurrentOffset(topic, queueId);
             var consumerInfo = new ConsumerInfo();
             consumerInfo.ConsumerGroup = group;
             consumerInfo.ConsumerId = consumerId;
             consumerInfo.Topic = topic;
             consumerInfo.QueueId = queueId;
+            consumerInfo.QueueMaxOffset = queueCurrentOffset;
             consumerInfo.ConsumedOffset = _offsetManager.GetQueueOffset(topic, queueId, group);
+            consumerInfo.UnConsumedMessageCount = consumerInfo.QueueMaxOffset - consumerInfo.ConsumedOffset;
             return consumerInfo;
         }
     }

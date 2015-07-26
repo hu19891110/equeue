@@ -11,6 +11,7 @@
         UpdateQueueOffsetRequest = 16,
         GetTopicQueueIdsForProducer = 17,
         GetTopicQueueIdsForConsumer = 18,
+        QueryBrokerStatisticInfo = 1000,
         QueryTopicQueueInfo = 1001,
         QueryConsumerInfo = 1002,
         AddQueue = 1003,
@@ -21,5 +22,6 @@
         RemoveQueueOffsetInfo = 1008,
         QueryMessage = 1009,
         GetMessageDetail = 1010,
+        CreateTopic = 1011,
     }
 }
