@@ -17,7 +17,7 @@ namespace EQueue.AdminWeb
 
         public MessageService(IBinarySerializer binarySerializer)
         {
-            _remotingClient = new SocketRemotingClient(new IPEndPoint(Settings.BrokerAddress, Settings.BrokerPort));
+            _remotingClient = new SocketRemotingClient("Client", Settings.BrokerAddress);
             _binarySerializer = binarySerializer;
         }
 
