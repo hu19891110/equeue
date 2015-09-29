@@ -142,7 +142,7 @@ namespace EQueue.Broker.LongPolling
         private void CheckNewMessageExist(string key, string topic, int queueId, long queueOffset)
         {
             var currentQueueOffset = _queueService.GetQueueCurrentOffset(topic, queueId);
-            if (currentQueueOffset >= queueOffset)
+            if (currentQueueOffset > queueOffset)
             {
                 PullRequest currentRequest;
                 if (_queueRequestDict.TryRemove(key, out currentRequest))
@@ -170,7 +170,7 @@ namespace EQueue.Broker.LongPolling
                 PullRequest request;
                 if (_queueRequestDict.TryGetValue(key, out request))
                 {
-                    if (queueOffset >= request.PullMessageRequest.QueueOffset)
+                    if (queueOffset > request.PullMessageRequest.QueueOffset)
                     {
                         PullRequest currentRequest;
                         if (_queueRequestDict.TryRemove(key, out currentRequest))

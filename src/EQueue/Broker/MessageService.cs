@@ -43,9 +43,10 @@ namespace EQueue.Broker
             lock (_syncObj)
             {
                 var messageOffset = _messageStore.GetNextMessageOffset();
-                var queueOffset = queue.IncrementCurrentOffset();
+                var queueOffset = queue.CurrentOffset;
                 var queueMessage = _messageStore.StoreMessage(queueId, messageOffset, queueOffset, message, routingKey);
                 queue.SetQueueIndex(queueMessage.QueueOffset, queueMessage.MessageOffset);
+                queue.IncrementCurrentOffset();
                 return new MessageStoreResult(queueMessage.MessageId, queueMessage.MessageOffset, queueMessage.QueueId, queueMessage.QueueOffset);
             }
         }

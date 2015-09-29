@@ -186,13 +186,14 @@ namespace EQueue.Broker
                 return new ConcurrentDictionary<string, long>();
             });
             var key = string.Format("{0}-{1}", topic, queueId);
-            queueOffsetDict.AddOrUpdate(key, offset, (k, oldOffset) =>
+            queueOffsetDict.AddOrUpdate(key, offset, (currentKey, oldOffset) =>
             {
-                if (offset != oldOffset)
+                if (offset > oldOffset)
                 {
                     changed = true;
+                    return offset;
                 }
-                return offset;
+                return oldOffset;
             });
             return changed;
         }
