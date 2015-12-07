@@ -4,6 +4,7 @@ using System.Linq;
 using ECommon.Components;
 using ECommon.Logging;
 using ECommon.Scheduling;
+using ECommon.Socketing;
 
 namespace EQueue.Broker.Client
 {
@@ -11,45 +12,47 @@ namespace EQueue.Broker.Client
     {
         private readonly ConcurrentDictionary<string, ConsumerGroup> _consumerGroupDict = new ConcurrentDictionary<string, ConsumerGroup>();
         private readonly IScheduleService _scheduleService;
-        private readonly ILogger _logger;
 
         public ConsumerManager()
         {
             _scheduleService = ObjectContainer.Resolve<IScheduleService>();
-            _logger = ObjectContainer.Resolve<ILoggerFactory>().Create(GetType().FullName);
         }
 
         public void Start()
         {
             _consumerGroupDict.Clear();
-            _scheduleService.StartTask("ConsumerManager.ScanNotActiveConsumer", ScanNotActiveConsumer, BrokerController.Instance.Setting.ScanNotActiveConsumerInterval, BrokerController.Instance.Setting.ScanNotActiveConsumerInterval);
+            _scheduleService.StartTask("ScanNotActiveConsumer", ScanNotActiveConsumer, 1000, 1000);
         }
         public void Shutdown()
         {
             _consumerGroupDict.Clear();
-            _scheduleService.StopTask("ConsumerManager.ScanNotActiveConsumer");
+            _scheduleService.StopTask("ScanNotActiveConsumer");
         }
-        public void RegisterConsumer(string groupName, ClientChannel clientChannel, IEnumerable<string> subscriptionTopics, IEnumerable<string> consumingQueues)
+        public void RegisterConsumer(string groupName, string consumerId, IEnumerable<string> subscriptionTopics, IEnumerable<string> consumingQueues, ITcpConnection connection)
         {
-            var consumerGroup = _consumerGroupDict.GetOrAdd(groupName, new ConsumerGroup(groupName, this));
-            consumerGroup.Register(clientChannel);
-            consumerGroup.UpdateConsumerSubscriptionTopics(clientChannel, subscriptionTopics);
-            consumerGroup.UpdateConsumerConsumingQueues(clientChannel, consumingQueues);
+            var consumerGroup = _consumerGroupDict.GetOrAdd(groupName, key => new ConsumerGroup(key));
+            consumerGroup.Register(consumerId, connection);
+            consumerGroup.UpdateConsumerSubscriptionTopics(consumerId, subscriptionTopics);
+            consumerGroup.UpdateConsumerConsumingQueues(consumerId, consumingQueues);
         }
-        public void RemoveConsumer(string consumerRemotingAddress)
+        public void RemoveConsumer(string consumerId)
         {
             foreach (var consumerGroup in _consumerGroupDict.Values)
             {
-                consumerGroup.RemoveConsumer(consumerRemotingAddress);
+                consumerGroup.RemoveConsumer(consumerId);
             }
         }
-        public bool IsConsumerExistForQueue(string topic, int queueId)
+        public int GetConsumerGroupCount()
         {
-            return _consumerGroupDict.Values.Any(x => x.IsConsumerExistForQueue(topic, queueId));
+            return _consumerGroupDict.Count;
         }
         public IEnumerable<ConsumerGroup> GetAllConsumerGroups()
         {
             return _consumerGroupDict.Values.ToList();
+        }
+        public int GetConsumerCount()
+        {
+            return GetAllConsumerGroups().Sum(x => x.GetConsumerCount());
         }
         public ConsumerGroup GetConsumerGroup(string groupName)
         {
@@ -58,7 +61,24 @@ namespace EQueue.Broker.Client
             {
                 return consumerGroup;
             }
-            return consumerGroup;
+            return null;
+        }
+        public bool IsConsumerActive(string consumerGroup, string consumerId)
+        {
+            var group = GetConsumerGroup(consumerGroup);
+            return group != null && group.IsConsumerActive(consumerId);
+        }
+        public bool IsConsumerExistForQueue(string topic, int queueId)
+        {
+            var groups = GetAllConsumerGroups();
+            foreach (var group in groups)
+            {
+                if (group.IsConsumerExistForQueue(topic, queueId))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
         public IEnumerable<ConsumerGroup> QueryConsumerGroup(string groupName)
         {

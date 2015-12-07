@@ -1,10 +1,10 @@
 ﻿using System.Text;
 using System.Web.Mvc;
-using EQueue.AdminWeb.Controls;
 using EQueue.AdminWeb.Models;
 
 namespace EQueue.AdminWeb.Controllers
 {
+    [HandleError]
     public class HomeController : Controller
     {
         private MessageService _messageService;
@@ -22,26 +22,39 @@ namespace EQueue.AdminWeb.Controllers
                 TopicCount = result.TopicCount,
                 QueueCount = result.QueueCount,
                 ConsumerGroupCount = result.ConsumerGroupCount,
-                InMemoryQueueMessageCount = result.InMemoryQueueMessageCount,
-                UnConsumedQueueMessageCount = result.UnConsumedQueueMessageCount,
-                CurrentMessageOffset = result.CurrentMessageOffset,
-                PersistedMessageOffset = result.PersistedMessageOffset,
-                UnPersistedMessageCount = result.CurrentMessageOffset - result.PersistedMessageOffset,
-                MinMessageOffset = result.MinMessageOffset
+                ProducerCount = result.ProducerCount,
+                ConsumerCount = result.ConsumerCount,
+                TotalUnConsumedMessageCount = result.TotalUnConsumedMessageCount,
+                MessageChunkCount = result.MessageChunkCount,
+                MessageMaxChunkNum = result.MessageMaxChunkNum,
+                MessageMinChunkNum = result.MessageMinChunkNum
             });
         }
-        public ActionResult CreateTopic(string topic, int initialQueueCount)
+        public ActionResult CreateTopic(string topic, int? initialQueueCount)
         {
-            _messageService.CreateTopic(topic, initialQueueCount);
-            return RedirectToAction("TopicInfo");
+            _messageService.CreateTopic(topic, initialQueueCount ?? 4);
+            return RedirectToAction("QueueInfo");
         }
-        public ActionResult TopicInfo(string topic)
+        public ActionResult DeleteTopic(string topic)
+        {
+            _messageService.DeleteTopic(topic);
+            return RedirectToAction("QueueInfo");
+        }
+        public ActionResult QueueInfo(string topic)
         {
             var topicQueueInfos = _messageService.GetTopicQueueInfo(topic);
             return View(new TopicQueueViewModel
             {
                 Topic = topic,
                 TopicQueueInfos = topicQueueInfos
+            });
+        }
+        public ActionResult ProducerInfo(string group, string topic)
+        {
+            var producerIds = _messageService.GetProducerInfo();
+            return View(new ProducerViewModel
+            {
+                ProducerIds = producerIds
             });
         }
         public ActionResult ConsumerInfo(string group, string topic)
@@ -54,60 +67,23 @@ namespace EQueue.AdminWeb.Controllers
                 ConsumerInfos = consumerInfos
             });
         }
-        public ActionResult TopicConsumeInfo(string group, string topic)
+        public ActionResult Message(string searchMessageId)
         {
-            var topicConsumeInfos = _messageService.GetTopicConsumeInfo(group, topic);
-            return View(new TopicConsumeViewModel
-            {
-                Group = group,
-                Topic = topic,
-                TopicConsumeInfos = topicConsumeInfos
-            });
-        }
-        public ActionResult Messages(string topic, int? queueId, int? code, string routingKey, int? page)
-        {
-            var currentPage = page ?? 1;
-            var size = 20;
-            if (currentPage <= 0) currentPage = 1;
-
-            var result = _messageService.QueryMessages(topic, queueId, code, routingKey, currentPage, size);
-
-            ViewBag.Topic = topic;
-            ViewBag.QueueId = queueId;
-            ViewBag.Code = code;
-            ViewBag.RoutingKey = routingKey;
-            ViewBag.Pager = Pager.Items(result.Total).PerPage(size).Move(currentPage).Segment(5).Center();
-
-            return View(new MessagesViewModel
-            {
-                Topic = topic,
-                QueueId = queueId,
-                Code = code,
-                RoutingKey = routingKey,
-                Total = result.Total,
-                Messages = result.Messages
-            });
-        }
-        public ActionResult Message(long? searchMessageOffset, string searchMessageId)
-        {
-            if (searchMessageOffset == null && string.IsNullOrWhiteSpace(searchMessageId))
+            if (string.IsNullOrWhiteSpace(searchMessageId))
             {
                 return View(new MessageViewModel());
             }
-            var message = _messageService.GetMessageDetail(searchMessageOffset, searchMessageId);
-            var model = new MessageViewModel { SearchMessageOffset = searchMessageOffset != null ? searchMessageOffset.Value.ToString() : null, SearchMessageId = searchMessageId };
+            var message = _messageService.GetMessageDetail(searchMessageId);
+            var model = new MessageViewModel { SearchMessageId = searchMessageId };
             if (message != null)
             {
                 model.MessageId = message.MessageId;
-                model.MessageOffset = message.MessageOffset.ToString();
+                model.Topic = message.Topic;
                 model.QueueId = message.QueueId.ToString();
                 model.QueueOffset = message.QueueOffset.ToString();
-                model.RoutingKey = message.RoutingKey;
                 model.Code = message.Code.ToString();
-                model.Content = Encoding.UTF8.GetString(message.Body);
-                model.Topic = message.Topic;
+                model.Payload = Encoding.UTF8.GetString(message.Body);
                 model.CreatedTime = message.CreatedTime.ToString();
-                model.ArrivedTime = message.ArrivedTime.ToString();
                 model.StoredTime = message.StoredTime.ToString();
             }
             return View(model);
@@ -115,27 +91,39 @@ namespace EQueue.AdminWeb.Controllers
         public ActionResult AddQueue(string topic)
         {
             _messageService.AddQueue(topic);
-            return RedirectToAction("TopicInfo");
+            return RedirectToAction("QueueInfo");
         }
-        public ActionResult RemoveQueue(string topic, int queueId)
+        public ActionResult DeleteQueue(string topic, int queueId)
         {
-            _messageService.RemoveQueue(topic, queueId);
-            return RedirectToAction("TopicInfo");
+            _messageService.DeleteQueue(topic, queueId);
+            return RedirectToAction("QueueInfo");
         }
-        public ActionResult EnableQueue(string topic, int queueId)
+        public ActionResult SetQueueProducerVisible(string topic, int queueId, bool visible)
         {
-            _messageService.EnableQueue(topic, queueId);
-            return RedirectToAction("TopicInfo");
+            _messageService.SetQueueProducerVisible(topic, queueId, visible);
+            return RedirectToAction("QueueInfo");
         }
-        public ActionResult DisableQueue(string topic, int queueId)
+        public ActionResult SetQueueConsumerVisible(string topic, int queueId, bool visible)
         {
-            _messageService.DisableQueue(topic, queueId);
-            return RedirectToAction("TopicInfo");
+            _messageService.SetQueueConsumerVisible(topic, queueId, visible);
+            return RedirectToAction("QueueInfo");
         }
-        public ActionResult RemoveQueueOffsetInfo(string consumerGroup, string topic, int queueId)
+        [HttpGet]
+        public ActionResult SetQueueNextConsumeOffset(string consumerGroup, string topic, int queueId)
         {
-            _messageService.RemoveQueueOffsetInfo(consumerGroup, topic, queueId);
-            return RedirectToAction("TopicInfo");
+            var model = new SetQueueNextConsumeOffsetViewModel
+            {
+                ConsumerGroup = consumerGroup,
+                Topic = topic,
+                QueueId = queueId
+            };
+            return View(model);
+        }
+        [HttpPost]
+        public ActionResult SetQueueNextConsumeOffset(string consumerGroup, string topic, int queueId, long nextOffset)
+        {
+            _messageService.SetQueueNextConsumeOffset(consumerGroup, topic, queueId, nextOffset);
+            return RedirectToAction("ConsumerInfo");
         }
     }
 }

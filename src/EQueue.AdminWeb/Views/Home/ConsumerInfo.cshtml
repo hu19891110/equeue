@@ -1,6 +1,6 @@
 ﻿@model EQueue.AdminWeb.Models.ConsumerViewModel
 @{
-    ViewBag.Title = "在线消费者信息";
+    ViewBag.Title = "消费者列表";
 }
 <div>
     @using (Html.BeginForm("ConsumerInfo", "Home", new { }, FormMethod.Post, new { @class = "form-inline", role = "form" }))
@@ -18,10 +18,10 @@
     <table class="table table-striped">
         <thead>
             <tr>
-                <th width="20%" class="vertical-center">
+                <th width="15%" class="vertical-center">
                     ConsumerGroup
                 </th>
-                <th width="20%" class="vertical-center">
+                <th width="15%" class="vertical-center">
                     ConsumerId
                 </th>
                 <th width="20%" class="vertical-center">
@@ -31,13 +31,16 @@
                     QueueId
                 </th>
                 <th width="10%" class="text-center vertical-center">
-                    QueueMaxOffset
+                    CurrentOffset
                 </th>
                 <th width="10%" class="text-center vertical-center">
-                    ConsumedOffset
+                    消费进度
                 </th>
                 <th width="10%" class="text-center vertical-center">
-                    UnConsumedCount
+                    消息堆积数
+                </th>
+                <th width="10%" class="vertical-center">
+                    操作
                 </th>
             </tr>
         </thead>
@@ -58,13 +61,26 @@
                         @item.QueueId
                     </td>
                     <td class="text-center vertical-center">
-                        @item.QueueMaxOffset
+                        @item.QueueCurrentOffset
                     </td>
                     <td class="text-center vertical-center">
                         @item.ConsumedOffset
                     </td>
                     <td class="text-center vertical-center">
-                        @item.UnConsumedMessageCount
+                        @(item.QueueCurrentOffset - item.ConsumedOffset)
+                    </td>
+                    <td class="vertical-center">
+                        <div class="dropdown">
+                            <button class="btn btn-default dropdown-toggle" type="button" data-toggle="dropdown">
+                                操作
+                                <span class="caret"></span>
+                            </button>
+                            <ul class="dropdown-menu">
+                                <li>
+                                    @Html.ActionLink("设置队列消费进度", "SetQueueNextConsumeOffset", new { consumerGroup = item.ConsumerGroup, topic = item.Topic, queueId = item.QueueId })
+                                </li>
+                            </ul>
+                        </div>
                     </td>
                 </tr>
             }

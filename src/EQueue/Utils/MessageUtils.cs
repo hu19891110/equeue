@@ -8,6 +8,8 @@ namespace EQueue.Utils
 {
     public class MessageUtils
     {
+        private static readonly byte[] EmptyBytes = new byte[0];
+
         public static byte[] EncodeSendMessageRequest(SendMessageRequest request)
         {
             //queueId
@@ -19,28 +21,26 @@ namespace EQueue.Utils
             //createdTimeTicks
             var messageCreatedTimeTicksBytes = BitConverter.GetBytes(request.Message.CreatedTime.Ticks);
 
-            //messageKey
-            var keyBytes = Encoding.UTF8.GetBytes(request.Message.Key);
-            var keyLengthBytes = BitConverter.GetBytes(keyBytes.Length);
-
             //topic
             var topicBytes = Encoding.UTF8.GetBytes(request.Message.Topic);
             var topicLengthBytes = BitConverter.GetBytes(topicBytes.Length);
 
-            //routingKey
-            var routingKeyBytes = Encoding.UTF8.GetBytes(request.RoutingKey);
-            var routingKeyLengthBytes = BitConverter.GetBytes(routingKeyBytes.Length);
+            //tag
+            var tagBytes = EmptyBytes;
+            if (!string.IsNullOrEmpty(request.Message.Tag))
+            {
+                tagBytes = Encoding.UTF8.GetBytes(request.Message.Tag);
+            }
+            var tagLengthBytes = BitConverter.GetBytes(tagBytes.Length);
 
             return Combine(
                 queueIdBytes,
                 messageCodeBytes,
                 messageCreatedTimeTicksBytes,
-                keyLengthBytes,
-                keyBytes,
                 topicLengthBytes,
                 topicBytes,
-                routingKeyLengthBytes,
-                routingKeyBytes,
+                tagLengthBytes,
+                tagBytes,
                 request.Message.Body);
         }
         public static SendMessageRequest DecodeSendMessageRequest(byte[] messageBuffer)
@@ -49,175 +49,197 @@ namespace EQueue.Utils
             var messageCodeBytes = new byte[4];
             var messageCreatedTimeTicksBytes = new byte[8];
             var topicLengthBytes = new byte[4];
-            var routingKeyLengthBytes = new byte[4];
-            var keyLengthBytes = new byte[4];
-            var headerLength = 0;
+            var tagLengthBytes = new byte[4];
+            var srcOffset = 0;
 
             //queueId
-            Buffer.BlockCopy(messageBuffer, 0, queueIdBytes, 0, 4);
-            headerLength += 4;
+            Buffer.BlockCopy(messageBuffer, srcOffset, queueIdBytes, 0, 4);
+            srcOffset += 4;
 
             //messageCode
-            Buffer.BlockCopy(messageBuffer, headerLength, messageCodeBytes, 0, 4);
-            headerLength += 4;
+            Buffer.BlockCopy(messageBuffer, srcOffset, messageCodeBytes, 0, 4);
+            srcOffset += 4;
 
             //messageCreatedTimeTicks
-            Buffer.BlockCopy(messageBuffer, headerLength, messageCreatedTimeTicksBytes, 0, 8);
-            headerLength += 8;
-
-            //key
-            Buffer.BlockCopy(messageBuffer, headerLength, keyLengthBytes, 0, 4);
-            headerLength += 4;
-
-            var keyLength = BitConverter.ToInt32(keyLengthBytes, 0);
-            var keyBytes = new byte[keyLength];
-            Buffer.BlockCopy(messageBuffer, headerLength, keyBytes, 0, keyLength);
-            headerLength += keyLength;
+            Buffer.BlockCopy(messageBuffer, srcOffset, messageCreatedTimeTicksBytes, 0, 8);
+            srcOffset += 8;
 
             //topic
-            Buffer.BlockCopy(messageBuffer, headerLength, topicLengthBytes, 0, 4);
-            headerLength += 4;
+            Buffer.BlockCopy(messageBuffer, srcOffset, topicLengthBytes, 0, 4);
+            srcOffset += 4;
 
             var topicLength = BitConverter.ToInt32(topicLengthBytes, 0);
             var topicBytes = new byte[topicLength];
-            Buffer.BlockCopy(messageBuffer, headerLength, topicBytes, 0, topicLength);
-            headerLength += topicLength;
+            Buffer.BlockCopy(messageBuffer, srcOffset, topicBytes, 0, topicLength);
+            srcOffset += topicLength;
 
-            //routingKey
-            Buffer.BlockCopy(messageBuffer, headerLength, routingKeyLengthBytes, 0, 4);
-            headerLength += 4;
+            //tag
+            Buffer.BlockCopy(messageBuffer, srcOffset, tagLengthBytes, 0, 4);
+            srcOffset += 4;
 
-            var routingKeyLength = BitConverter.ToInt32(routingKeyLengthBytes, 0);
-            var routingKeyBytes = new byte[routingKeyLength];
-            Buffer.BlockCopy(messageBuffer, headerLength, routingKeyBytes, 0, routingKeyLength);
-            headerLength += routingKeyLength;
+            var tagLength = BitConverter.ToInt32(tagLengthBytes, 0);
+            var tagBytes = new byte[tagLength];
+            Buffer.BlockCopy(messageBuffer, srcOffset, tagBytes, 0, tagLength);
+            srcOffset += tagLength;
 
             //body
-            var bodyBytes = new byte[messageBuffer.Length - headerLength];
-            Buffer.BlockCopy(messageBuffer, headerLength, bodyBytes, 0, bodyBytes.Length);
+            var bodyBytes = new byte[messageBuffer.Length - srcOffset];
+            Buffer.BlockCopy(messageBuffer, srcOffset, bodyBytes, 0, bodyBytes.Length);
 
             var queueId = BitConverter.ToInt32(queueIdBytes, 0);
             var code = BitConverter.ToInt32(messageCodeBytes, 0);
             var createdTimeTicks = BitConverter.ToInt64(messageCreatedTimeTicksBytes, 0);
             var createdTime = new DateTime(createdTimeTicks);
             var topic = Encoding.UTF8.GetString(topicBytes);
-            var key = Encoding.UTF8.GetString(keyBytes);
-            var routingKey = Encoding.UTF8.GetString(routingKeyBytes);
+            var tag = Encoding.UTF8.GetString(tagBytes);
 
-            return new SendMessageRequest { QueueId = queueId, Message = new Message(topic, code, key, bodyBytes, createdTime), RoutingKey = routingKey };
+            return new SendMessageRequest { QueueId = queueId, Message = new Message(topic, code, bodyBytes, createdTime, tag) };
         }
 
-        public static byte[] EncodeMessageSendResponse(SendMessageResponse response)
+        public static byte[] EncodeMessageStoreResult(MessageStoreResult result)
         {
-            //messageOffset
-            var messageOffsetBytes = BitConverter.GetBytes(response.MessageOffset);
-
             //code
-            var messageCodeBytes = BitConverter.GetBytes(response.MessageCode);
+            var messageCodeBytes = BitConverter.GetBytes(result.Code);
 
             //queueId
-            var queueIdBytes = BitConverter.GetBytes(response.QueueId);
+            var queueIdBytes = BitConverter.GetBytes(result.QueueId);
 
             //queueOffset
-            var queueOffsetBytes = BitConverter.GetBytes(response.QueueOffset);
+            var queueOffsetBytes = BitConverter.GetBytes(result.QueueOffset);
 
             //messageId
-            var messageIdBytes = Encoding.UTF8.GetBytes(response.MessageId);
+            var messageIdBytes = Encoding.UTF8.GetBytes(result.MessageId);
             var messageIdLengthBytes = BitConverter.GetBytes(messageIdBytes.Length);
 
-            //messageKey
-            var messageKeyBytes = Encoding.UTF8.GetBytes(response.MessageKey);
-            var messageKeyLengthBytes = BitConverter.GetBytes(messageKeyBytes.Length);
-
             //topic
-            var topicBytes = Encoding.UTF8.GetBytes(response.Topic);
+            var topicBytes = Encoding.UTF8.GetBytes(result.Topic);
             var topicLengthBytes = BitConverter.GetBytes(topicBytes.Length);
 
+            //tag
+            var tagBytes = EmptyBytes;
+            if (!string.IsNullOrEmpty(result.Tag))
+            {
+                tagBytes = Encoding.UTF8.GetBytes(result.Tag);
+            }
+            var tagLengthBytes = BitConverter.GetBytes(tagBytes.Length);
+
             return Combine(
-                messageOffsetBytes,
                 messageCodeBytes,
                 queueIdBytes,
                 queueOffsetBytes,
                 messageIdLengthBytes,
                 messageIdBytes,
-                messageKeyLengthBytes,
-                messageKeyBytes,
                 topicLengthBytes,
-                topicBytes);
+                topicBytes,
+                tagLengthBytes,
+                tagBytes);
         }
-        public static SendMessageResponse DecodeMessageSendResponse(byte[] buffer)
+        public static MessageStoreResult DecodeMessageStoreResult(byte[] buffer)
         {
-            var messageOffsetBytes = new byte[8];
             var messageCodeBytes = new byte[4];
             var queueIdBytes = new byte[4];
             var queueOffsetBytes = new byte[8];
             var messageIdLengthBytes = new byte[4];
-            var messageKeyLengthBytes = new byte[4];
             var topicLengthBytes = new byte[4];
-            var headerLength = 0;
-
-            //messageOffset
-            Buffer.BlockCopy(buffer, 0, messageOffsetBytes, 0, 8);
-            headerLength += 8;
+            var tagLengthBytes = new byte[4];
+            var srcOffset = 0;
 
             //messageCode
-            Buffer.BlockCopy(buffer, 0, messageCodeBytes, 0, 4);
-            headerLength += 4;
+            Buffer.BlockCopy(buffer, srcOffset, messageCodeBytes, 0, 4);
+            srcOffset += 4;
 
             //queueId
-            Buffer.BlockCopy(buffer, 0, queueIdBytes, 0, 4);
-            headerLength += 4;
+            Buffer.BlockCopy(buffer, srcOffset, queueIdBytes, 0, 4);
+            srcOffset += 4;
 
             //queueOffset
-            Buffer.BlockCopy(buffer, 0, queueOffsetBytes, 0, 8);
-            headerLength += 8;
+            Buffer.BlockCopy(buffer, srcOffset, queueOffsetBytes, 0, 8);
+            srcOffset += 8;
 
             //messageId
-            Buffer.BlockCopy(buffer, headerLength, messageIdLengthBytes, 0, 4);
-            headerLength += 4;
+            Buffer.BlockCopy(buffer, srcOffset, messageIdLengthBytes, 0, 4);
+            srcOffset += 4;
 
             var messageIdLength = BitConverter.ToInt32(messageIdLengthBytes, 0);
             var messageIdBytes = new byte[messageIdLength];
-            Buffer.BlockCopy(buffer, headerLength, messageIdBytes, 0, messageIdLength);
-            headerLength += messageIdLength;
-
-            //messageKey
-            Buffer.BlockCopy(buffer, headerLength, messageKeyLengthBytes, 0, 4);
-            headerLength += 4;
-
-            var messageKeyLength = BitConverter.ToInt32(messageKeyLengthBytes, 0);
-            var messageKeyBytes = new byte[messageKeyLength];
-            Buffer.BlockCopy(buffer, headerLength, messageKeyBytes, 0, messageKeyLength);
-            headerLength += messageKeyLength;
+            Buffer.BlockCopy(buffer, srcOffset, messageIdBytes, 0, messageIdLength);
+            srcOffset += messageIdLength;
 
             //topic
-            Buffer.BlockCopy(buffer, headerLength, topicLengthBytes, 0, 4);
-            headerLength += 4;
+            Buffer.BlockCopy(buffer, srcOffset, topicLengthBytes, 0, 4);
+            srcOffset += 4;
 
             var topicLength = BitConverter.ToInt32(topicLengthBytes, 0);
             var topicBytes = new byte[topicLength];
-            Buffer.BlockCopy(buffer, headerLength, topicBytes, 0, topicLength);
-            headerLength += topicLength;
+            Buffer.BlockCopy(buffer, srcOffset, topicBytes, 0, topicLength);
+            srcOffset += topicLength;
 
-            var messageOffset = BitConverter.ToInt64(messageOffsetBytes, 0);
-            var messageCode = BitConverter.ToInt32(messageCodeBytes, 0);
-            var queueId = BitConverter.ToInt32(queueIdBytes, 0);
-            var queueOffset = BitConverter.ToInt32(queueOffsetBytes, 0);
+            //tag
+            Buffer.BlockCopy(buffer, srcOffset, tagLengthBytes, 0, 4);
+            srcOffset += 4;
+
+            var tagLength = BitConverter.ToInt32(tagLengthBytes, 0);
+            var tagBytes = new byte[tagLength];
+            Buffer.BlockCopy(buffer, srcOffset, tagBytes, 0, tagLength);
+            srcOffset += tagLength;
+
             var messageId = Encoding.UTF8.GetString(messageIdBytes);
-            var messageKey = Encoding.UTF8.GetString(messageKeyBytes);
+            var code = BitConverter.ToInt32(messageCodeBytes, 0);
             var topic = Encoding.UTF8.GetString(topicBytes);
+            var tag = Encoding.UTF8.GetString(tagBytes);
+            var queueId = BitConverter.ToInt32(queueIdBytes, 0);
+            var queueOffset = BitConverter.ToInt64(queueOffsetBytes, 0);
 
-            return new SendMessageResponse(
-                messageKey,
+            return new MessageStoreResult(
                 messageId,
-                messageOffset,
-                messageCode,
+                code,
                 topic,
                 queueId,
-                queueOffset);
+                queueOffset,
+                tag);
         }
 
-        private static byte[] Combine(params byte[][] arrays)
+        public static string DecodeString(byte[] sourceBuffer, int startOffset, out int nextStartOffset)
+        {
+            return Encoding.UTF8.GetString(DecodeBytes(sourceBuffer, startOffset, out nextStartOffset));
+        }
+        public static int DecodeInt(byte[] sourceBuffer, int startOffset, out int nextStartOffset)
+        {
+            var intBytes = new byte[4];
+            Buffer.BlockCopy(sourceBuffer, startOffset, intBytes, 0, 4);
+            nextStartOffset = startOffset + 4;
+            return BitConverter.ToInt32(intBytes, 0);
+        }
+        public static long DecodeLong(byte[] sourceBuffer, int startOffset, out int nextStartOffset)
+        {
+            var longBytes = new byte[8];
+            Buffer.BlockCopy(sourceBuffer, startOffset, longBytes, 0, 8);
+            nextStartOffset = startOffset + 8;
+            return BitConverter.ToInt64(longBytes, 0);
+        }
+        public static DateTime DecodeDateTime(byte[] sourceBuffer, int startOffset, out int nextStartOffset)
+        {
+            var longBytes = new byte[8];
+            Buffer.BlockCopy(sourceBuffer, startOffset, longBytes, 0, 8);
+            nextStartOffset = startOffset + 8;
+            return new DateTime(BitConverter.ToInt64(longBytes, 0));
+        }
+        public static byte[] DecodeBytes(byte[] sourceBuffer, int startOffset, out int nextStartOffset)
+        {
+            var lengthBytes = new byte[4];
+            Buffer.BlockCopy(sourceBuffer, startOffset, lengthBytes, 0, 4);
+            startOffset += 4;
+
+            var length = BitConverter.ToInt32(lengthBytes, 0);
+            var dataBytes = new byte[length];
+            Buffer.BlockCopy(sourceBuffer, startOffset, dataBytes, 0, length);
+            startOffset += length;
+
+            nextStartOffset = startOffset;
+
+            return dataBytes;
+        }
+        public static byte[] Combine(params byte[][] arrays)
         {
             byte[] destination = new byte[arrays.Sum(x => x.Length)];
             int offset = 0;

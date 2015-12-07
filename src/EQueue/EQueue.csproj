@@ -18,12 +18,14 @@
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
+    <Optimize>true</Optimize>
     <OutputPath>bin\Debug\</OutputPath>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <Prefer32Bit>false</Prefer32Bit>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
@@ -34,98 +36,131 @@
     <WarningLevel>4</WarningLevel>
     <DocumentationFile>D:\nugetpublish\EQueue.XML</DocumentationFile>
     <Prefer32Bit>false</Prefer32Bit>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Dapper">
-      <HintPath>..\packages\Dapper.1.38\lib\net45\Dapper.dll</HintPath>
+    <Reference Include="Autofac, Version=3.5.0.0, Culture=neutral, PublicKeyToken=17863af14b0044da, processorArchitecture=MSIL">
+      <HintPath>..\packages\Autofac.3.5.2\lib\net40\Autofac.dll</HintPath>
+      <Private>True</Private>
     </Reference>
-    <Reference Include="ECommon, Version=1.5.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\packages\ecommon.1.5.0\lib\net45\ECommon.dll</HintPath>
+    <Reference Include="Dapper, Version=1.40.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\Dapper.1.42\lib\net45\Dapper.dll</HintPath>
+      <Private>True</Private>
     </Reference>
-    <Reference Include="ECommon.Dapper, Version=1.4.2.0, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\packages\ECommon.Dapper.1.4.2\lib\net45\ECommon.Dapper.dll</HintPath>
+    <Reference Include="ECommon, Version=2.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\ECommon.2.0.0\lib\net45\ECommon.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="log4net, Version=1.2.13.0, Culture=neutral, PublicKeyToken=669e0ddf0bb1aa2a, processorArchitecture=MSIL">
+      <HintPath>..\packages\log4net.2.0.3\lib\net40-full\log4net.dll</HintPath>
+      <Private>True</Private>
     </Reference>
     <Reference Include="Microsoft.CSharp" />
+    <Reference Include="Microsoft.VisualBasic" />
+    <Reference Include="Newtonsoft.Json, Version=7.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <HintPath>..\packages\Newtonsoft.Json.7.0.1\lib\net45\Newtonsoft.Json.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="protobuf-net, Version=2.0.0.668, Culture=neutral, PublicKeyToken=257b51d87d2e4d67, processorArchitecture=MSIL">
+      <HintPath>..\packages\protobuf-net.2.0.0.668\lib\net40\protobuf-net.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Data" />
     <Reference Include="System.XML" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Broker\RequestHandlers\CreateTopicRequestHandler.cs" />
-    <Compile Include="Broker\SqlServerQueueStoreSetting.cs" />
-    <Compile Include="Broker\SqlServerQueueStore.cs" />
-    <Compile Include="Broker\InMemoryQueueStore.cs" />
+    <Compile Include="Broker\Client\ProducerManager.cs" />
+    <Compile Include="Broker\DefaultChunkStatisticService.cs" />
+    <Compile Include="Broker\DefaultMessageStore.cs" />
+    <Compile Include="Broker\DeleteMessageStrategies\DeleteMessageByCountStrategy.cs" />
+    <Compile Include="Broker\DeleteMessageStrategies\DeleteMessageByTimeStrategy.cs" />
+    <Compile Include="Broker\DeleteMessageStrategies\IDeleteMessageStrategy.cs" />
+    <Compile Include="Broker\Exceptions\BrokerCleanningException.cs" />
+    <Compile Include="Broker\IChunkStatisticService.cs" />
+    <Compile Include="Broker\QueueLogRecord.cs" />
+    <Compile Include="Broker\MessageLogRecord.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\DeleteTopicRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\CreateTopicRequestHandler.cs" />
     <Compile Include="Broker\IQueueStore.cs" />
-    <Compile Include="Broker\IQueueService.cs" />
-    <Compile Include="Broker\QueueService.cs" />
-    <Compile Include="Broker\RequestHandlers\DisableQueueRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\EnableQueueRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\GetMessageDetailRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\QueryBrokerStatisticInfoRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\QueryMessageRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\QueryTopicConsumeInfoRequestHandler.cs" />
+    <Compile Include="Broker\DefaultQueueStore.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\QueryProducerInfoRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\SetQueueProducerVisibleRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\SetQueueConsumerVisibleRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\GetMessageDetailRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\QueryBrokerStatisticInfoRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\ProducerHeartbeatRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\QueryConsumerRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\RemoveQueueOffsetInfoRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\RemoveQueueRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\DeleteQueueRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\GetTopicQueueIdsForProducerRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\AddQueueRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\QueryTopicQueueInfoRequestHandler.cs" />
-    <Compile Include="Broker\RequestHandlers\QueryConsumerInfoRequestHandler.cs" />
-    <Compile Include="Broker\SqlServerOffsetManager.cs" />
-    <Compile Include="Broker\SqlServerOffsetManagerSetting.cs" />
-    <Compile Include="Broker\SqlServerMessageStoreSetting.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\AddQueueRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\QueryTopicQueueInfoRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\QueryConsumerInfoRequestHandler.cs" />
+    <Compile Include="Broker\DefaultConsumeOffsetStore.cs" />
     <Compile Include="Broker\BrokerSetting.cs" />
-    <Compile Include="Broker\Client\ClientChannel.cs" />
+    <Compile Include="Broker\Client\ConsumerHeartbeatInfo.cs" />
     <Compile Include="Broker\Client\ConsumerGroup.cs" />
     <Compile Include="Broker\Client\ConsumerManager.cs" />
-    <Compile Include="Broker\SqlServerMessageStore.cs" />
-    <Compile Include="Broker\IOffsetManager.cs" />
-    <Compile Include="Broker\InvalidQueueIdException.cs" />
+    <Compile Include="Broker\IConsumeOffsetStore.cs" />
+    <Compile Include="Broker\Exceptions\QueueNotExistException.cs" />
     <Compile Include="Broker\LongPolling\PullRequest.cs" />
     <Compile Include="Broker\LongPolling\SuspendedPullRequestManager.cs" />
     <Compile Include="Broker\BrokerController.cs" />
-    <Compile Include="Broker\InMemoryOffsetManager.cs" />
-    <Compile Include="Broker\QueueStatus.cs" />
     <Compile Include="Broker\RequestHandlers\ConsumerHeartbeatRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\PullMessageRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\GetTopicQueueIdsForConsumerRequestHandler.cs" />
+    <Compile Include="Broker\RequestHandlers\Admin\SetQueueNextConsumeOffsetRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\UpdateQueueOffsetRequestHandler.cs" />
     <Compile Include="Broker\RequestHandlers\SendMessageRequestHandler.cs" />
     <Compile Include="Broker\Queue.cs" />
-    <Compile Include="Broker\MessageService.cs" />
-    <Compile Include="Broker\IMessageService.cs" />
+    <Compile Include="Broker\Storage\ChunkFooter.cs" />
+    <Compile Include="Broker\Storage\ChunkHeader.cs" />
+    <Compile Include="Broker\Storage\ChunkUtil.cs" />
+    <Compile Include="Broker\Storage\Exceptions\ChunkCreateException.cs" />
+    <Compile Include="Broker\Storage\Exceptions\ChunkCompleteException.cs" />
+    <Compile Include="Broker\Storage\Exceptions\ChunkNotExistException.cs" />
+    <Compile Include="Broker\Storage\Exceptions\ChunkWriteException.cs" />
+    <Compile Include="Broker\Storage\Exceptions\ChunkReadException.cs" />
+    <Compile Include="Broker\Storage\Exceptions\ChunkFileNotExistException.cs" />
+    <Compile Include="Broker\Storage\Exceptions\ChunkBadDataException.cs" />
+    <Compile Include="Broker\Storage\FileNamingStrategies\IFileNamingStrategy.cs" />
+    <Compile Include="Broker\Storage\LogRecords\BufferLogRecord.cs" />
+    <Compile Include="Broker\Storage\LogRecords\ILogRecord.cs" />
+    <Compile Include="Broker\Storage\RecordBufferReadResult.cs" />
+    <Compile Include="Broker\Storage\ChunkManagerConfig.cs" />
+    <Compile Include="Broker\Storage\ChunkManager.cs" />
+    <Compile Include="Broker\Storage\ChunkReader.cs" />
+    <Compile Include="Broker\Storage\RecordWriteResult.cs" />
+    <Compile Include="Broker\Storage\FileNamingStrategies\DefaultFileNamingStrategy.cs" />
+    <Compile Include="Broker\Storage\ChunkWriter.cs" />
+    <Compile Include="Broker\Storage\WriterWorkItem.cs" />
+    <Compile Include="Broker\Storage\ReaderWorkItem.cs" />
+    <Compile Include="Broker\Storage\Chunk.cs" />
     <Compile Include="Clients\Consumers\ConsumingMessage.cs" />
     <Compile Include="Clients\Consumers\MessageContext.cs" />
     <Compile Include="Clients\Consumers\IMessageContext.cs" />
     <Compile Include="Protocols\ConsumeFromWhere.cs" />
     <Compile Include="Clients\Producers\IQueueSelector.cs" />
-    <Compile Include="Broker\InMemoryMessageStore.cs" />
     <Compile Include="Broker\IMessageStore.cs" />
-    <Compile Include="Broker\MessageStoreResult.cs" />
     <Compile Include="Clients\Consumers\Consumer.cs" />
     <Compile Include="Clients\Consumers\IMessageHandler.cs" />
     <Compile Include="Clients\Consumers\MessageHandleMode.cs" />
     <Compile Include="Clients\Consumers\IAllocateMessageQueueStrategy.cs" />
     <Compile Include="Clients\Consumers\AverageAllocateMessageQueueStrategy.cs" />
-    <Compile Include="Clients\Consumers\ConsumerSettings.cs" />
+    <Compile Include="Clients\Consumers\ConsumerSetting.cs" />
     <Compile Include="Clients\Producers\Producer.cs" />
     <Compile Include="Clients\Producers\ProducerSetting.cs" />
     <Compile Include="Clients\Producers\QueueAverageSelector.cs" />
     <Compile Include="Clients\Producers\QueueHashSelector.cs" />
     <Compile Include="Configurations\ConfigurationExtensions.cs" />
+    <Compile Include="Protocols\DeleteTopicRequest.cs" />
     <Compile Include="Protocols\CreateTopicRequest.cs" />
     <Compile Include="Protocols\GetMessageDetailRequest.cs" />
-    <Compile Include="Protocols\QueryMessageResponse.cs" />
-    <Compile Include="Protocols\QueryMessageRequest.cs" />
-    <Compile Include="Protocols\RemoveQueueOffsetInfoRequest.cs" />
     <Compile Include="Protocols\TopicConsumeInfo.cs" />
-    <Compile Include="Protocols\DisableQueueRequest.cs" />
-    <Compile Include="Protocols\EnableQueueRequest.cs" />
-    <Compile Include="Protocols\QueryTopicConsumeInfoRequest.cs" />
-    <Compile Include="Protocols\RemoveQueueRequest.cs" />
+    <Compile Include="Protocols\SetQueueProducerVisibleRequest.cs" />
+    <Compile Include="Protocols\SetQueueConsumerVisibleRequest.cs" />
+    <Compile Include="Protocols\DeleteQueueRequest.cs" />
     <Compile Include="Protocols\AddQueueRequest.cs" />
     <Compile Include="Protocols\QueryTopicQueueInfoRequest.cs" />
     <Compile Include="Protocols\QueryConsumerInfoRequest.cs" />
@@ -140,7 +175,6 @@
     <Compile Include="Clients\Consumers\ProcessQueue.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Clients\Consumers\PullRequest.cs" />
-    <Compile Include="Clients\Consumers\PullResult.cs" />
     <Compile Include="Protocols\PullStatus.cs" />
     <Compile Include="Clients\Producers\SendResult.cs" />
     <Compile Include="Clients\Producers\SendStatus.cs" />
@@ -148,20 +182,23 @@
     <Compile Include="Protocols\PullMessageRequest.cs" />
     <Compile Include="Protocols\SendMessageRequest.cs" />
     <Compile Include="Protocols\ResponseCode.cs" />
-    <Compile Include="Protocols\SendMessageResponse.cs" />
+    <Compile Include="Protocols\MessageStoreResult.cs" />
     <Compile Include="Protocols\QueryConsumerRequest.cs" />
+    <Compile Include="Protocols\SetQueueNextConsumeOffsetRequest.cs" />
     <Compile Include="Protocols\UpdateQueueOffsetRequest.cs" />
+    <Compile Include="Utils\ConsoleEventHandlerService.cs" />
+    <Compile Include="Utils\QueueKeyUtil.cs" />
+    <Compile Include="Utils\MessageIdUtil.cs" />
     <Compile Include="Utils\MessageUtils.cs" />
     <Compile Include="Utils\RemotingResponseFactory.cs" />
+    <Compile Include="Utils\ClientIdFactory.cs" />
+    <Compile Include="Utils\StringExtensions.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
     <None Include="README.md" />
   </ItemGroup>
   <ItemGroup />
-  <ItemGroup>
-    <Content Include="SqlScripts\GenerateSqlServerTables.sql" />
-  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(SolutionDir)\.nuget\NuGet.targets" Condition="Exists('$(SolutionDir)\.nuget\NuGet.targets')" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

@@ -1,10 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Linq;
-using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using ECommon.Remoting;
+using ECommon.Scheduling;
 using ECommon.Serializing;
 using EQueue.Protocols;
 
@@ -12,18 +13,31 @@ namespace EQueue.AdminWeb
 {
     public class MessageService
     {
+        private readonly byte[] EmptyBytes = new byte[0];
         private readonly SocketRemotingClient _remotingClient;
         private readonly IBinarySerializer _binarySerializer;
+        private readonly IScheduleService _scheduleService;
+        private readonly SendEmailService _sendEmailService;
+        private readonly int _unconsumedMessageWarnningThreshold;
+        private readonly int _checkUnconsumedMessageInterval;
 
-        public MessageService(IBinarySerializer binarySerializer)
+        public MessageService(IBinarySerializer binarySerializer, IScheduleService scheduleService, SendEmailService sendEmailService)
         {
-            _remotingClient = new SocketRemotingClient("Client", Settings.BrokerAddress);
+            _remotingClient = new SocketRemotingClient(Settings.BrokerAddress);
             _binarySerializer = binarySerializer;
+            _scheduleService = scheduleService;
+            _unconsumedMessageWarnningThreshold = int.Parse(ConfigurationManager.AppSettings["unconsumedMessageWarnningThreshold"]);
+            _checkUnconsumedMessageInterval = int.Parse(ConfigurationManager.AppSettings["checkUnconsumedMessageInterval"]);
+            _sendEmailService = sendEmailService;
         }
 
         public void Start()
         {
             Task.Factory.StartNew(() => _remotingClient.Start());
+            if (bool.Parse(ConfigurationManager.AppSettings["enableMonitor"]))
+            {
+                _scheduleService.StartTask("CheckUnconsumedMessages", CheckUnconsumedMessages, 1000, _checkUnconsumedMessageInterval);
+            }
         }
         public BrokerStatisticInfo QueryBrokerStatisticInfo()
         {
@@ -48,6 +62,16 @@ namespace EQueue.AdminWeb
                 throw new Exception(string.Format("CreateTopic failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
+        public void DeleteTopic(string topic)
+        {
+            var requestData = _binarySerializer.Serialize(new DeleteTopicRequest(topic));
+            var remotingRequest = new RemotingRequest((int)RequestCode.DeleteTopic, requestData);
+            var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
+            if (remotingResponse.Code != (int)ResponseCode.Success)
+            {
+                throw new Exception(string.Format("DeleteTopic failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+            }
+        }
         public IEnumerable<TopicQueueInfo> GetTopicQueueInfo(string topic)
         {
             var requestData = _binarySerializer.Serialize(new QueryTopicQueueInfoRequest(topic));
@@ -59,7 +83,21 @@ namespace EQueue.AdminWeb
             }
             else
             {
-                throw new Exception(string.Format("QueryTopicQueueInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+                throw new Exception(string.Format("GetTopicQueueInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+            }
+        }
+        public IEnumerable<string> GetProducerInfo()
+        {
+            var remotingRequest = new RemotingRequest((int)RequestCode.QueryProducerInfo, EmptyBytes);
+            var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 10000);
+            if (remotingResponse.Code == (int)ResponseCode.Success)
+            {
+                var producerIds = Encoding.UTF8.GetString(remotingResponse.Body);
+                return producerIds.Split(new[] { "," }, StringSplitOptions.RemoveEmptyEntries);
+            }
+            else
+            {
+                throw new Exception(string.Format("GetProducerInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
         public IEnumerable<ConsumerInfo> GetConsumerInfo(string group, string topic)
@@ -73,21 +111,7 @@ namespace EQueue.AdminWeb
             }
             else
             {
-                throw new Exception(string.Format("QueryConsumerInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
-            }
-        }
-        public IEnumerable<TopicConsumeInfo> GetTopicConsumeInfo(string group, string topic)
-        {
-            var requestData = _binarySerializer.Serialize(new QueryTopicConsumeInfoRequest(group, topic));
-            var remotingRequest = new RemotingRequest((int)RequestCode.QueryTopicConsumeInfo, requestData);
-            var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 10000);
-            if (remotingResponse.Code == (int)ResponseCode.Success)
-            {
-                return _binarySerializer.Deserialize<IEnumerable<TopicConsumeInfo>>(remotingResponse.Body);
-            }
-            else
-            {
-                throw new Exception(string.Format("QueryTopicConsumeInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+                throw new Exception(string.Format("GetConsumerInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
         public void AddQueue(string topic)
@@ -100,64 +124,39 @@ namespace EQueue.AdminWeb
                 throw new Exception(string.Format("AddQueue failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
-        public void RemoveQueue(string topic, int queueId)
+        public void DeleteQueue(string topic, int queueId)
         {
-            var requestData = _binarySerializer.Serialize(new RemoveQueueRequest(topic, queueId));
-            var remotingRequest = new RemotingRequest((int)RequestCode.RemoveQueue, requestData);
+            var requestData = _binarySerializer.Serialize(new DeleteQueueRequest(topic, queueId));
+            var remotingRequest = new RemotingRequest((int)RequestCode.DeleteQueue, requestData);
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
             if (remotingResponse.Code != (int)ResponseCode.Success)
             {
-                throw new Exception(string.Format("RemoveQueue failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+                throw new Exception(string.Format("DeleteQueue failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
-        public void EnableQueue(string topic, int queueId)
+        public void SetQueueProducerVisible(string topic, int queueId, bool visible)
         {
-            var requestData = _binarySerializer.Serialize(new EnableQueueRequest(topic, queueId));
-            var remotingRequest = new RemotingRequest((int)RequestCode.EnableQueue, requestData);
+            var requestData = _binarySerializer.Serialize(new SetQueueProducerVisibleRequest(topic, queueId, visible));
+            var remotingRequest = new RemotingRequest((int)RequestCode.SetProducerVisible, requestData);
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
             if (remotingResponse.Code != (int)ResponseCode.Success)
             {
-                throw new Exception(string.Format("EnableQueue failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+                throw new Exception(string.Format("SetQueueProducerVisible failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
-        public void DisableQueue(string topic, int queueId)
+        public void SetQueueConsumerVisible(string topic, int queueId, bool visible)
         {
-            var requestData = _binarySerializer.Serialize(new DisableQueueRequest(topic, queueId));
-            var remotingRequest = new RemotingRequest((int)RequestCode.DisableQueue, requestData);
+            var requestData = _binarySerializer.Serialize(new SetQueueConsumerVisibleRequest(topic, queueId, visible));
+            var remotingRequest = new RemotingRequest((int)RequestCode.SetConsumerVisible, requestData);
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
             if (remotingResponse.Code != (int)ResponseCode.Success)
             {
-                throw new Exception(string.Format("DisableQueue failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+                throw new Exception(string.Format("SetQueueConsumerVisible failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
-        public void RemoveQueueOffsetInfo(string consumerGroup, string topic, int queueId)
+        public QueueMessage GetMessageDetail(string messageId)
         {
-            var requestData = _binarySerializer.Serialize(new RemoveQueueOffsetInfoRequest(consumerGroup, topic, queueId));
-            var remotingRequest = new RemotingRequest((int)RequestCode.RemoveQueueOffsetInfo, requestData);
-            var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
-            if (remotingResponse.Code != (int)ResponseCode.Success)
-            {
-                throw new Exception(string.Format("RemoveQueueOffsetInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
-            }
-        }
-        public QueryMessageResponse QueryMessages(string topic, int? queueId, int? code, string routingKey, int pageIndex, int pageSize)
-        {
-            var request = new QueryMessageRequest(topic, queueId, code, routingKey, pageIndex, pageSize);
-            var requestData = _binarySerializer.Serialize(request);
-            var remotingRequest = new RemotingRequest((int)RequestCode.QueryMessage, requestData);
-            var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
-            if (remotingResponse.Code == (int)ResponseCode.Success)
-            {
-                return _binarySerializer.Deserialize<QueryMessageResponse>(remotingResponse.Body);
-            }
-            else
-            {
-                throw new Exception(string.Format("QueryMessages failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
-            }
-        }
-        public QueueMessage GetMessageDetail(long? messageOffset, string messageId)
-        {
-            var requestData = _binarySerializer.Serialize(new GetMessageDetailRequest(messageOffset, messageId));
+            var requestData = _binarySerializer.Serialize(new GetMessageDetailRequest(messageId));
             var remotingRequest = new RemotingRequest((int)RequestCode.GetMessageDetail, requestData);
             var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
             if (remotingResponse.Code == (int)ResponseCode.Success)
@@ -167,6 +166,38 @@ namespace EQueue.AdminWeb
             else
             {
                 throw new Exception(string.Format("GetMessageDetail failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+            }
+        }
+        public void SetQueueNextConsumeOffset(string consumerGroup, string topic, int queueId, long nextOffset)
+        {
+            if (nextOffset < 0)
+            {
+                throw new ArgumentException("nextOffset cannot be small than zero.");
+            }
+            var requestData = _binarySerializer.Serialize(new SetQueueNextConsumeOffsetRequest(consumerGroup, topic, queueId, nextOffset));
+            var remotingRequest = new RemotingRequest((int)RequestCode.SetQueueNextConsumeOffset, requestData);
+            var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
+            if (remotingResponse.Code != (int)ResponseCode.Success)
+            {
+                throw new Exception(string.Format("SetQueueNextConsumeOffset failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
+            }
+        }
+
+        private void CheckUnconsumedMessages()
+        {
+            var remotingRequest = new RemotingRequest((int)RequestCode.QueryBrokerStatisticInfo, new byte[0]);
+            var remotingResponse = _remotingClient.InvokeSync(remotingRequest, 30000);
+            if (remotingResponse.Code == (int)ResponseCode.Success)
+            {
+                var statisticInfo = _binarySerializer.Deserialize<BrokerStatisticInfo>(remotingResponse.Body);
+                if (statisticInfo.TotalUnConsumedMessageCount >= _unconsumedMessageWarnningThreshold)
+                {
+                    _sendEmailService.SendTooManyMessageNotConsumedNotification(statisticInfo.TotalUnConsumedMessageCount);
+                }
+            }
+            else
+            {
+                throw new Exception(string.Format("QueryBrokerStatisticInfo failed, errorMessage: {0}", Encoding.UTF8.GetString(remotingResponse.Body)));
             }
         }
     }

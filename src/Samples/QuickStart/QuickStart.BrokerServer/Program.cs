@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Configuration;
-using ECommon.Autofac;
-using ECommon.JsonNet;
-using ECommon.Log4Net;
+using ECommon.Configurations;
 using EQueue.Broker;
 using EQueue.Configurations;
 using ECommonConfiguration = ECommon.Configurations.Configuration;
@@ -14,7 +12,13 @@ namespace QuickStart.BrokerServer
         static void Main(string[] args)
         {
             InitializeEQueue();
-            BrokerController.Create(new BrokerSetting { NotifyWhenMessageArrived = false }).Start();
+            BrokerController.Create(new BrokerSetting(
+                ConfigurationManager.AppSettings["fileStoreRootPath"],
+                chunkCacheMaxPercent: 95,
+                chunkFlushInterval: int.Parse(ConfigurationManager.AppSettings["flushInterval"]),
+                messageChunkDataSize: int.Parse(ConfigurationManager.AppSettings["chunkSize"]) * 1024 * 1024,
+                chunkWriteBuffer: int.Parse(ConfigurationManager.AppSettings["chunkWriteBuffer"]) * 1024,
+                enableCache: bool.Parse(ConfigurationManager.AppSettings["enableCache"])) { NotifyWhenMessageArrived = false }).Start();
             Console.ReadLine();
         }
 
@@ -27,35 +31,8 @@ namespace QuickStart.BrokerServer
                 .UseLog4Net()
                 .UseJsonNet()
                 .RegisterUnhandledExceptionHandler()
-                .RegisterEQueueComponents();
-
-            var persistMode = ConfigurationManager.AppSettings["persistMode"];
-
-            if (persistMode == "sql")
-            {
-                var connectionString = ConfigurationManager.AppSettings["connectionString"];
-                var messageLogFile = ConfigurationManager.AppSettings["messageLogFile"];
-
-                var queueStoreSetting = new SqlServerQueueStoreSetting
-                {
-                    ConnectionString = connectionString
-                };
-                var messageStoreSetting = new SqlServerMessageStoreSetting
-                {
-                    ConnectionString = connectionString,
-                    MessageLogFile = messageLogFile
-                };
-                var offsetManagerSetting = new SqlServerOffsetManagerSetting
-                {
-                    ConnectionString = connectionString
-                };
-
-                configuration
-                    .UseSqlServerQueueStore(queueStoreSetting)
-                    .UseSqlServerMessageStore(messageStoreSetting)
-                    .UseSqlServerOffsetManager(offsetManagerSetting);
-            }
-
+                .RegisterEQueueComponents()
+                .UseDeleteMessageByCountStrategy(20);
         }
     }
 }

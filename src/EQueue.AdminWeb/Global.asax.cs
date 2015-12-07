@@ -1,4 +1,5 @@
 ﻿using System.Reflection;
+using System.Web;
 using System.Web.Mvc;
 using System.Web.Routing;
 using Autofac;
@@ -6,12 +7,11 @@ using Autofac.Integration.Mvc;
 using ECommon.Autofac;
 using ECommon.Components;
 using ECommon.Configurations;
-using ECommon.JsonNet;
 using ECommon.Log4Net;
 
 namespace EQueue.AdminWeb
 {
-    public class MvcApplication : System.Web.HttpApplication
+    public class MvcApplication : HttpApplication
     {
         protected void Application_Start()
         {
@@ -26,6 +26,7 @@ namespace EQueue.AdminWeb
                 .UseLog4Net()
                 .UseJsonNet();
 
+            configuration.SetDefault<SendEmailService, SendEmailService>();
             configuration.SetDefault<MessageService, MessageService>();
             ObjectContainer.Resolve<MessageService>().Start();
             RegisterControllers();

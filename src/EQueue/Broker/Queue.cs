@@ -1,124 +1,201 @@
-﻿using System.Collections.Concurrent;
+﻿using System;
+using System.Collections.Concurrent;
+using System.IO;
 using System.Linq;
-using System.Threading;
-using ECommon.Extensions;
+using ECommon.Components;
+using ECommon.Logging;
+using ECommon.Serializing;
+using EQueue.Broker.Storage;
+using EQueue.Utils;
 
 namespace EQueue.Broker
 {
     public class Queue
     {
-        private ConcurrentDictionary<long, long> _queueItemDict = new ConcurrentDictionary<long, long>();
-        private long _currentOffset = 0;
+        private const string QueueSettingFileName = "queue.setting";
+        private readonly ChunkWriter _chunkWriter;
+        private readonly ChunkReader _chunkReader;
+        private readonly ChunkManager _chunkManager;
+        private readonly IJsonSerializer _jsonSerializer;
+        private readonly string _queueSettingFile;
+        private QueueSetting _setting;
+        private long _nextOffset = 0;
+        private ILogger _logger;
 
         public string Topic { get; private set; }
         public int QueueId { get; private set; }
-        public long CurrentOffset { get { return _currentOffset; } }
-        public QueueStatus Status { get; private set; }
+        public long NextOffset { get { return _nextOffset; } }
+        public QueueSetting Setting { get { return _setting; } }
+        public string Key { get; private set; }
 
         public Queue(string topic, int queueId)
         {
             Topic = topic;
             QueueId = queueId;
-            Status = QueueStatus.Normal;
+            Key = QueueKeyUtil.CreateQueueKey(topic, queueId);
+
+            _jsonSerializer = ObjectContainer.Resolve<IJsonSerializer>();
+            _chunkManager = new ChunkManager(Key, BrokerController.Instance.Setting.QueueChunkConfig, Topic + @"\" + QueueId);
+            _chunkWriter = new ChunkWriter(_chunkManager);
+            _chunkReader = new ChunkReader(_chunkManager, _chunkWriter);
+            _queueSettingFile = Path.Combine(_chunkManager.ChunkPath, QueueSettingFileName);
+            _logger = ObjectContainer.Resolve<ILoggerFactory>().Create(this.GetType().FullName);
         }
 
-        public long GetMessageCount()
+        public void Load()
         {
-            return _queueItemDict.Count;
-        }
-        public long GetMessageRealCount()
-        {
-            var minOffset = GetMinQueueOffset();
-            if (minOffset == -1L)
+            _setting = LoadQueueSetting();
+            if (_setting == null)
             {
-                return 0L;
+                _setting = new QueueSetting();
+                SaveQueueSetting();
             }
-            return _currentOffset - minOffset + 1;
-        }
-        public void Enable()
-        {
-            Status = QueueStatus.Normal;
-        }
-        public void Disable()
-        {
-            Status = QueueStatus.Disabled;
-        }
-        public long IncrementCurrentOffset()
-        {
-            return Interlocked.Increment(ref _currentOffset);
-        }
-        public void RecoverQueueIndex(long queueOffset, long messageOffset, bool allowSetQueueIndex)
-        {
-            if (allowSetQueueIndex)
+            if (_setting.IsDeleted)
             {
-                SetQueueIndex(queueOffset, messageOffset);
+                return;
             }
-            if (queueOffset > _currentOffset)
+            _chunkManager.Load(ReadMessageIndex);
+            _chunkWriter.Open();
+
+            var lastChunk = _chunkManager.GetLastChunk();
+            var lastOffsetGlobalPosition = lastChunk.DataPosition + lastChunk.ChunkHeader.ChunkDataStartPosition;
+            if (lastOffsetGlobalPosition > 0)
             {
-                _currentOffset = queueOffset;
+                _nextOffset = lastOffsetGlobalPosition / _chunkManager.Config.ChunkDataUnitSize;
             }
         }
-        public void SetQueueIndex(long queueOffset, long messageOffset)
+        public void Close()
         {
-            _queueItemDict[queueOffset] = messageOffset;
+            _chunkWriter.Close();
+            _chunkManager.Close();
+        }
+        public void AddMessage(long messagePosition, string messageTag)
+        {
+            _chunkWriter.Write(new QueueLogRecord(messagePosition + 1, messageTag.GetHashcode2()));
+        }
+        public long GetMessagePosition(long queueOffset, out int tagCode, bool autoCache = true)
+        {
+            tagCode = 0;
+
+            var position = queueOffset * _chunkManager.Config.ChunkDataUnitSize;
+            var record = _chunkReader.TryReadAt(position, ReadMessageIndex, autoCache);
+            if (record == null)
+            {
+                return -1L;
+            }
+
+            tagCode = record.TagCode;
+            return record.MessageLogPosition - 1;
+        }
+        public void SetProducerVisible(bool visible)
+        {
+            _setting.ProducerVisible = visible;
+            SaveQueueSetting();
+        }
+        public void SetConsumerVisible(bool visible)
+        {
+            _setting.ConsumerVisible = visible;
+            SaveQueueSetting();
+        }
+        public void Delete()
+        {
+            _setting.IsDeleted = true;
+            SaveQueueSetting();
+
+            Close();
+
+            Directory.Delete(_chunkManager.ChunkPath, true);
+        }
+        public long IncrementNextOffset()
+        {
+            return _nextOffset++;
         }
         public long GetMinQueueOffset()
         {
-            long minOffset = -1;
-            foreach (var key in _queueItemDict.Keys)
+            if (_nextOffset == 0L)
             {
-                if (minOffset == -1)
-                {
-                    minOffset = key;
-                }
-                else if (key < minOffset)
-                {
-                    minOffset = key;
-                }
+                return -1L;
             }
-            return minOffset;
+            return _chunkManager.GetFirstChunk().ChunkHeader.ChunkDataStartPosition / _chunkManager.Config.ChunkDataUnitSize;
         }
-        public long GetMessageOffset(long queueOffset)
+        public void DeleteMessages(long minMessagePosition)
         {
-            long messageOffset;
-            if (_queueItemDict.TryGetValue(queueOffset, out messageOffset))
+            var chunks = _chunkManager.GetAllChunks().Where(x => x.IsCompleted).OrderBy(x => x.ChunkHeader.ChunkNumber);
+
+            foreach (var chunk in chunks)
             {
-                return messageOffset;
-            }
-            return -1;
-        }
-        public void RemoveQueueOffset(long queueOffset)
-        {
-            _queueItemDict.Remove(queueOffset);
-        }
-        public long RemoveAllPreviousQueueIndex(long maxAllowToRemoveQueueOffset)
-        {
-            var totalRemovedCount = 0L;
-            var allPreviousQueueOffsets = _queueItemDict.Keys.Where(key => key <= maxAllowToRemoveQueueOffset);
-            foreach (var queueOffset in allPreviousQueueOffsets)
-            {
-                long messageOffset;
-                if (_queueItemDict.TryRemove(queueOffset, out messageOffset))
+                var maxPosition = chunk.ChunkHeader.ChunkDataEndPosition - _chunkManager.Config.ChunkDataUnitSize;
+                var record = _chunkReader.TryReadAt(maxPosition, ReadMessageIndex, false);
+                if (record == null)
                 {
-                    totalRemovedCount++;
+                    continue;
+                }
+                var chunkLastMessagePosition = record.MessageLogPosition - 1;
+                if (chunkLastMessagePosition < minMessagePosition)
+                {
+                    if (_chunkManager.RemoveChunk(chunk))
+                    {
+                        _logger.InfoFormat("Queue (topic: {0}, queueId: {1}) chunk #{2} is deleted, chunkLastMessagePosition: {3}, messageStoreMinMessagePosition: {4}", Topic, QueueId, chunk.ChunkHeader.ChunkNumber, chunkLastMessagePosition, minMessagePosition);
+                    }
                 }
             }
-            return totalRemovedCount;
         }
-        public long RemoveRequiredQueueIndexFromLast(long requireRemoveCount)
+
+        private QueueLogRecord ReadMessageIndex(byte[] recordBuffer)
         {
-            var queueOffset = _queueItemDict.Keys.LastOrDefault();
-            var totalRemovedCount = 0L;
-            while (queueOffset >= 0L && totalRemovedCount < requireRemoveCount)
+            var record = new QueueLogRecord();
+            record.ReadFrom(recordBuffer);
+            if (record.MessageLogPosition <= 0)
             {
-                long messageOffset;
-                if (_queueItemDict.TryRemove(queueOffset, out messageOffset))
-                {
-                    totalRemovedCount++;
-                }
-                queueOffset--;
+                return null;
             }
-            return totalRemovedCount;
+            return record;
+        }
+        private QueueSetting LoadQueueSetting()
+        {
+            if (!Directory.Exists(_chunkManager.ChunkPath))
+            {
+                Directory.CreateDirectory(_chunkManager.ChunkPath);
+            }
+            using (var stream = new FileStream(_queueSettingFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite))
+            {
+                using (var reader = new StreamReader(stream))
+                {
+                    var text = reader.ReadToEnd();
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        return _jsonSerializer.Deserialize<QueueSetting>(text);
+                    }
+                    return null;
+                }
+            }
+        }
+        private void SaveQueueSetting()
+        {
+            if (!Directory.Exists(_chunkManager.ChunkPath))
+            {
+                Directory.CreateDirectory(_chunkManager.ChunkPath);
+            }
+            using (var stream = new FileStream(_queueSettingFile, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite))
+            {
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write(_jsonSerializer.Serialize(_setting));
+                }
+            }
+        }
+    }
+    public class QueueSetting
+    {
+        public bool ProducerVisible;
+        public bool ConsumerVisible;
+        public bool IsDeleted;
+
+        public QueueSetting()
+        {
+            ProducerVisible = true;
+            ConsumerVisible = true;
+            IsDeleted = false;
         }
     }
 }

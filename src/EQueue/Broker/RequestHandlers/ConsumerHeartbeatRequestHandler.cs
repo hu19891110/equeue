@@ -4,7 +4,7 @@ using ECommon.Serializing;
 using EQueue.Broker.Client;
 using EQueue.Protocols;
 
-namespace EQueue.Broker.Processors
+namespace EQueue.Broker.RequestHandlers
 {
     public class ConsumerHeartbeatRequestHandler : IRequestHandler
     {
@@ -20,7 +20,7 @@ namespace EQueue.Broker.Processors
         public RemotingResponse HandleRequest(IRequestHandlerContext context, RemotingRequest remotingRequest)
         {
             var consumerData = _binarySerializer.Deserialize<ConsumerData>(remotingRequest.Body);
-            _consumerManager.RegisterConsumer(consumerData.GroupName, new ClientChannel(consumerData.ConsumerId, context.Connection), consumerData.SubscriptionTopics, consumerData.ConsumingQueues);
+            _consumerManager.RegisterConsumer(consumerData.GroupName, consumerData.ConsumerId, consumerData.SubscriptionTopics, consumerData.ConsumingQueues, context.Connection);
             return null;
         }
     }
