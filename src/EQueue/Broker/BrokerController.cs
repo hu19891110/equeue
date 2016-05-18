@@ -80,10 +80,6 @@ namespace EQueue.Broker
 
         public static BrokerController Create(BrokerSetting setting = null)
         {
-            if (_instance != null)
-            {
-                throw new NotSupportedException("Broker controller cannot be create twice.");
-            }
             _instance = new BrokerController(setting);
             return _instance;
         }
@@ -277,7 +273,10 @@ namespace EQueue.Broker
             public void OnConnectionClosed(ITcpConnection connection, SocketError socketError)
             {
                 var consumerId = ClientIdFactory.CreateClientId(connection.RemotingEndPoint as IPEndPoint);
-                _brokerController._consumerManager.RemoveConsumer(consumerId);
+                if (_brokerController.Setting.RemoveConsumerWhenDisconnect)
+                {
+                    _brokerController._consumerManager.RemoveConsumer(consumerId);
+                }
             }
         }
     }
