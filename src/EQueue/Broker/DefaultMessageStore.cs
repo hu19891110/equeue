@@ -1,6 +1,7 @@
 ﻿using System;
 using ECommon.Logging;
 using ECommon.Scheduling;
+using ECommon.Utilities;
 using EQueue.Broker.DeleteMessageStrategies;
 using EQueue.Broker.Storage;
 using EQueue.Protocols;
@@ -17,6 +18,8 @@ namespace EQueue.Broker
         private readonly IScheduleService _scheduleService;
         private readonly ILogger _logger;
         private long _minConsumedMessagePosition = -1;
+        private BufferQueue<MessageLogRecord> _bufferQueue;
+        private readonly object _lockObj = new object();
 
         public long MinMessagePosition
         {
@@ -54,7 +57,8 @@ namespace EQueue.Broker
 
         public void Load()
         {
-            _chunkManager = new ChunkManager(this.GetType().Name, BrokerController.Instance.Setting.MessageChunkConfig);
+            _bufferQueue = new BufferQueue<MessageLogRecord>("MessageBufferQueue", BrokerController.Instance.Setting.MessageWriteQueueThreshold, PersistMessages, _logger);
+            _chunkManager = new ChunkManager("MessageChunk", BrokerController.Instance.Setting.MessageChunkConfig, BrokerController.Instance.Setting.IsMessageStoreMemoryMode);
             _chunkWriter = new ChunkWriter(_chunkManager);
             _chunkReader = new ChunkReader(_chunkManager, _chunkWriter);
 
@@ -71,19 +75,25 @@ namespace EQueue.Broker
             _chunkWriter.Close();
             _chunkManager.Close();
         }
-        public MessageLogRecord StoreMessage(int queueId, long queueOffset, Message message)
+        public void StoreMessageAsync(IQueue queue, Message message, Action<MessageLogRecord, object> callback, object parameter)
         {
-            var record = new MessageLogRecord(
-                message.Topic,
-                message.Code,
-                message.Body,
-                queueId,
-                queueOffset,
-                message.CreatedTime,
-                DateTime.Now,
-                message.Tag);
-            _chunkWriter.Write(record);
-            return record;
+            lock (_lockObj)
+            {
+                var record = new MessageLogRecord(
+                    message.Topic,
+                    message.Code,
+                    message.Body,
+                    queue.QueueId,
+                    queue.NextOffset,
+                    message.CreatedTime,
+                    DateTime.Now,
+                    message.Tag,
+                    message.ProducerAddress ?? string.Empty,
+                    callback,
+                    parameter);
+                _bufferQueue.EnqueueMessage(record);
+                queue.IncrementNextOffset();
+            }
         }
         public byte[] GetMessageBuffer(long position)
         {
@@ -120,6 +130,12 @@ namespace EQueue.Broker
         public void UpdateMinConsumedMessagePosition(long minConsumedMessagePosition)
         {
             _minConsumedMessagePosition = minConsumedMessagePosition;
+        }
+
+        private void PersistMessages(MessageLogRecord message)
+        {
+            _chunkWriter.Write(message);
+            message.OnPersisted();
         }
 
         private void DeleteMessages()

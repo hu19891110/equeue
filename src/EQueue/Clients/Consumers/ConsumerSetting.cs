@@ -1,4 +1,4 @@
-﻿using System;
+﻿using System.Collections.Generic;
 using System.Net;
 using ECommon.Socketing;
 using EQueue.Protocols;
@@ -7,34 +7,39 @@ namespace EQueue.Clients.Consumers
 {
     public class ConsumerSetting
     {
-        /// <summary>Broker的发送消息的地址；
+        /// <summary>Producer所在的集群名，一个集群下有可以有多个Producer；默认为DefaultCluster
         /// </summary>
-        public IPEndPoint BrokerAddress { get; set; }
-        /// <summary>Broker处理管理请求的地址；
+        public string ClusterName { get; set; }
+        /// <summary>NameServer地址列表
         /// </summary>
-        public IPEndPoint BrokerAdminAddress { get; set; }
-        /// <summary>本地所绑定的地址，可以为空，开发者可以指定本地所使用的端口；
-        /// </summary>
-        public IPEndPoint LocalAddress { get; set; }
-        /// <summary>本地管理所绑定的地址，可以为空，开发者可以指定本地所使用的端口；
-        /// </summary>
-        public IPEndPoint LocalAdminAddress { get; set; }
+        public IEnumerable<IPEndPoint> NameServerList { get; set; }
         /// <summary>Socket通信层相关的设置；
         /// </summary>
         public SocketSetting SocketSetting { get; set; }
+        /// <summary>表示框架是否需要自动PullMessage、HandleMessage、Commit Consume Offset；默认值为True；
+        /// </summary>
+        public bool AutoPull { get; set; }
+        /// <summary>当AutoPull为False时，当用户调用Consumer的CommitConsumeOffset方法来更新消费进度时，Consumer内部是否需要异步提交消费进度到Broker；默认为True；
+        /// 如果是异步，则当用户调用CommitConsumeOffset时，只是在本地内存更新消费进度，然后定时的方式提交消费进度到Broker；
+        /// 定时间隔通过CommitConsumerOffsetInterval来设置；
+        /// </summary>
+        public bool CommitConsumeOffsetAsync { get; set; }
+        /// <summary>当要自己拉取消息时，Consumer内部拉取消息到本地缓存的缓存队列的大小，默认为100000
+        /// </summary>
+        public int ManualPullLocalMessageQueueMaxSize { get; set; }
         /// <summary>消费者负载均衡的间隔，默认为1s；
         /// </summary>
         public int RebalanceInterval { get; set; }
-        /// <summary>从Broker获取最新队列信息的间隔，默认为1s；
+        /// <summary>刷新Broker信息和Topic路由信息的间隔，默认为5s；
         /// </summary>
-        public int UpdateTopicQueueCountInterval { get; set; }
+        public int RefreshBrokerAndTopicRouteInfoInterval { get; set; }
         /// <summary>向Broker发送心跳的间隔，默认为1s；
         /// </summary>
         public int HeartbeatBrokerInterval { get; set; }
         /// <summary>向Broker发送消息消费进度的间隔，默认为1s；
         /// </summary>
-        public int SendConsumerOffsetInterval { get; set; }
-        /// <summary>从Broker拉取消息时，开始流控的阀值，默认为1000；即当前拉取到本地未消费的消息数到达1000时，将开始做流控，减慢拉取速度；
+        public int CommitConsumerOffsetInterval { get; set; }
+        /// <summary>从Broker拉取消息时，开始流控的阀值，默认为10000；即当前拉取到本地未消费的消息数到达10000时，将开始做流控，减慢拉取速度；
         /// </summary>
         public int PullMessageFlowControlThreshold { get; set; }
         /// <summary>当拉取消息开始流控时，需要逐渐增加流控时间的步长百分比，默认为1%；
@@ -62,10 +67,10 @@ namespace EQueue.Clients.Consumers
         /// <summary>重试处理出现异常（失败）的消息的时间间隔，一次重试一个处理失败的消息，默认为1000毫秒；
         /// </summary>
         public int RetryMessageInterval { get; set; }
-        /// <summary>一次从Broker拉取的消息的最大数量，默认为32个；
+        /// <summary>一次从Broker拉取的消息的最大数量，默认为64个；
         /// </summary>
         public int PullMessageBatchSize { get; set; }
-        /// <summary>消费者启动时，针对当前要消费的队列，如果Broker上之前没有保存过任何该队列的消费进度（一般是该消费者第一次启动），则通过该选项指定要从队列的什么位置开始消费；可以从队列的第一个消息开始消费，也可以从最后一个消息之后的后续的新消息开始消费；
+        /// <summary>消费者启动时，针对当前要消费的队列，如果Broker上之前没有保存过任何该队列的消费进度（消费者第一次启动），则通过该选项指定要从队列的什么位置开始消费；可以从队列的第一个消息开始消费，也可以从最后一个消息之后的后续的新消息开始消费；默认为LastOffset
         /// </summary>
         public ConsumeFromWhere ConsumeFromWhere { get; set; }
         /// <summary>消息消费的模式，支持并行消费和顺序消费两种方式，默认为并行消费；
@@ -79,22 +84,28 @@ namespace EQueue.Clients.Consumers
 
         public ConsumerSetting()
         {
-            BrokerAddress = new IPEndPoint(SocketUtils.GetLocalIPV4(), 5001);
-            BrokerAdminAddress = new IPEndPoint(SocketUtils.GetLocalIPV4(), 5002);
+            ClusterName = "DefaultCluster";
+            NameServerList = new List<IPEndPoint>()
+            {
+                new IPEndPoint(SocketUtils.GetLocalIPV4(), 9493)
+            };
             SocketSetting = new SocketSetting();
             RebalanceInterval = 1000;
             HeartbeatBrokerInterval = 1000;
-            UpdateTopicQueueCountInterval = 1000;
-            SendConsumerOffsetInterval = 1000;
-            PullMessageFlowControlThreshold = 1000;
+            RefreshBrokerAndTopicRouteInfoInterval = 1000 * 5;
+            CommitConsumerOffsetInterval = 1000;
+            PullMessageFlowControlThreshold = 10000;
             PullMessageFlowControlStepPercent = 1;
             PullMessageFlowControlStepWaitMilliseconds = 1;
             SuspendPullRequestMilliseconds = 60 * 1000;
             PullRequestTimeoutMilliseconds = 70 * 1000;
             RetryMessageInterval = 1000;
-            PullMessageBatchSize = 32;
+            PullMessageBatchSize = 64;
             ConsumeFromWhere = ConsumeFromWhere.LastOffset;
             MessageHandleMode = MessageHandleMode.Parallel;
+            AutoPull = true;
+            CommitConsumeOffsetAsync = true;
+            ManualPullLocalMessageQueueMaxSize = 10 * 10000;
         }
     }
 }

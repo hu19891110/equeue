@@ -1,8 +1,9 @@
-﻿using ECommon.Components;
+﻿using System.Collections.Generic;
+using ECommon.Components;
 using ECommon.Remoting;
 using ECommon.Serializing;
 using EQueue.Broker.Exceptions;
-using EQueue.Protocols;
+using EQueue.Protocols.Brokers.Requests;
 using EQueue.Utils;
 
 namespace EQueue.Broker.RequestHandlers.Admin
@@ -25,8 +26,9 @@ namespace EQueue.Broker.RequestHandlers.Admin
                 throw new BrokerCleanningException();
             }
             var request = _binarySerializer.Deserialize<CreateTopicRequest>(remotingRequest.Body);
-            _queueStore.CreateTopic(request.Topic, request.InitialQueueCount);
-            return RemotingResponseFactory.CreateResponse(remotingRequest);
+            IEnumerable<int> queueIds = _queueStore.CreateTopic(request.Topic, request.InitialQueueCount);
+            var data = _binarySerializer.Serialize(queueIds);
+            return RemotingResponseFactory.CreateResponse(remotingRequest, data);
         }
     }
 }

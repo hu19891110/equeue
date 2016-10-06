@@ -1,5 +1,5 @@
 ﻿using System.Collections.Generic;
-using EQueue.Broker.Storage;
+using EQueue.Protocols.Brokers;
 
 namespace EQueue.Broker
 {
@@ -11,10 +11,12 @@ namespace EQueue.Broker
         IEnumerable<string> GetAllTopics();
         Queue GetQueue(string topic, int queueId);
         int GetAllQueueCount();
+        IEnumerable<Queue> GetAllQueues();
+        IList<TopicQueueInfo> GetTopicQueueInfoList(string topic = null);
         long GetMinConusmedMessagePosition();
         long GetTotalUnConusmedMessageCount();
         bool IsTopicExist(string topic);
-        bool IsQueueExist(string queueKey);
+        bool IsQueueExist(QueueKey queueKey);
         bool IsQueueExist(string topic, int queueId);
         long GetQueueCurrentOffset(string topic, int queueId);
         long GetQueueMinOffset(string topic, int queueId);
@@ -22,9 +24,8 @@ namespace EQueue.Broker
         void DeleteQueue(string topic, int queueId);
         void SetProducerVisible(string topic, int queueId, bool visible);
         void SetConsumerVisible(string topic, int queueId, bool visible);
-        void CreateTopic(string topic, int initialQueueCount);
+        IEnumerable<int> CreateTopic(string topic, int? initialQueueCount);
         void DeleteTopic(string topic);
-        IEnumerable<Queue> QueryQueues(string topic = null);
         IEnumerable<Queue> GetQueues(string topic, bool autoCreate = false);
     }
 }

@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ECommon.Components;
+using ECommon.Extensions;
 using ECommon.Logging;
 using ECommon.Remoting;
 using EQueue.Broker.Client;
 using EQueue.Broker.LongPolling;
 using EQueue.Broker.Storage;
 using EQueue.Protocols;
+using EQueue.Protocols.Brokers.Requests;
 using EQueue.Utils;
 
 namespace EQueue.Broker.RequestHandlers
@@ -160,7 +162,7 @@ namespace EQueue.Broker.RequestHandlers
                         var tagList = tags.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
                         foreach (var tag in tagList)
                         {
-                            if (tag == "*" || tag.GetHashcode2() == tagCode)
+                            if (tag == "*" || tag.GetStringHashcode() == tagCode)
                             {
                                 messages.Add(message);
                                 break;
@@ -172,7 +174,6 @@ namespace EQueue.Broker.RequestHandlers
                 }
                 catch (ChunkNotExistException ex)
                 {
-                    _logger.Error(string.Format("Message chunk not exist, topic: {0}, queueId: {1}, queueOffset: {2}", topic, queueId, queueOffset), ex);
                     messageChunkNotExistException = ex;
                     break;
                 }
@@ -207,6 +208,7 @@ namespace EQueue.Broker.RequestHandlers
             var queueMinOffset = _queueStore.GetQueueMinOffset(topic, queueId);
             if (pullOffset < queueMinOffset)
             {
+                _logger.InfoFormat("Reset next pullOffset to queueMinOffset, [pullOffset: {0}, queueMinOffset: {1}]", pullOffset, queueMinOffset);
                 return new PullMessageResult
                 {
                     Status = PullStatus.NextOffsetReset,
@@ -216,24 +218,18 @@ namespace EQueue.Broker.RequestHandlers
             //pullOffset太大
             else if (pullOffset > queueCurrentOffset + 1)
             {
+                _logger.InfoFormat("Reset next pullOffset to queueCurrentOffset, [pullOffset: {0}, queueCurrentOffset: {1}]", pullOffset, queueCurrentOffset);
                 return new PullMessageResult
                 {
                     Status = PullStatus.NextOffsetReset,
                     NextBeginOffset = queueCurrentOffset + 1
                 };
             }
-            //如果正好等于queueMaxOffset+1，属于正常情况，表示当前队列没有新消息，告诉客户端没有新消息即可
-            else if (pullOffset == queueCurrentOffset + 1)
-            {
-                return new PullMessageResult
-                {
-                    Status = PullStatus.NoNewMessage
-                };
-            }
             //如果当前的pullOffset对应的Message的Chunk文件不存在，则需要重新计算下一个pullOffset
             else if (messageChunkNotExistException != null)
             {
                 var nextPullOffset = CalculateNextPullOffset(queue, pullOffset, queueCurrentOffset);
+                _logger.InfoFormat("Reset next pullOffset to calculatedNextPullOffset, [pullOffset: {0}, calculatedNextPullOffset: {1}]", pullOffset, nextPullOffset);
                 return new PullMessageResult
                 {
                     Status = PullStatus.NextOffsetReset,

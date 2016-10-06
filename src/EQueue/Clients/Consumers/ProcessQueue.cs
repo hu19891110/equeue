@@ -1,20 +1,17 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 using ECommon.Extensions;
-using EQueue.Protocols;
 
 namespace EQueue.Clients.Consumers
 {
     public class ProcessQueue
     {
         private readonly object _lockObj = new object();
-        private readonly SortedDictionary<long, QueueMessage> _messageDict = new SortedDictionary<long, QueueMessage>();
+        private readonly SortedDictionary<long, ConsumingMessage> _messageDict = new SortedDictionary<long, ConsumingMessage>();
         private long _consumedQueueOffset = -1L;
         private long _previousConsumedQueueOffset = -1L;
         private long _maxQueueOffset = -1;
         private int _messageCount = 0;
-
-        public bool IsDropped { get; set; }
 
         public void Reset()
         {
@@ -36,34 +33,45 @@ namespace EQueue.Clients.Consumers
             }
             return false;
         }
-        public void AddMessages(IEnumerable<QueueMessage> messages)
+        public void MarkAllConsumingMessageIgnored()
         {
             lock (_lockObj)
             {
-                foreach (var message in messages)
+                var existingConsumingMessages = _messageDict.Values.ToList();
+                foreach (var consumingMessage in existingConsumingMessages)
                 {
-                    if (_messageDict.ContainsKey(message.QueueOffset))
+                    consumingMessage.IsIgnored = true;
+                }
+            }
+        }
+        public void AddMessages(IEnumerable<ConsumingMessage> consumingMessages)
+        {
+            lock (_lockObj)
+            {
+                foreach (var consumingMessage in consumingMessages)
+                {
+                    if (_messageDict.ContainsKey(consumingMessage.Message.QueueOffset))
                     {
                         continue;
                     }
-                    _messageDict[message.QueueOffset] = message;
-                    if (_maxQueueOffset == -1 && message.QueueOffset >= 0)
+                    _messageDict[consumingMessage.Message.QueueOffset] = consumingMessage;
+                    if (_maxQueueOffset == -1 && consumingMessage.Message.QueueOffset >= 0)
                     {
-                        _maxQueueOffset = message.QueueOffset;
+                        _maxQueueOffset = consumingMessage.Message.QueueOffset;
                     }
-                    else if (message.QueueOffset > _maxQueueOffset)
+                    else if (consumingMessage.Message.QueueOffset > _maxQueueOffset)
                     {
-                        _maxQueueOffset = message.QueueOffset;
+                        _maxQueueOffset = consumingMessage.Message.QueueOffset;
                     }
                     _messageCount++;
                 }
             }
         }
-        public void RemoveMessage(QueueMessage message)
+        public void RemoveMessage(ConsumingMessage consumingMessage)
         {
             lock (_lockObj)
             {
-                if (_messageDict.Remove(message.QueueOffset))
+                if (_messageDict.Remove(consumingMessage.Message.QueueOffset))
                 {
                     if (_messageDict.Keys.IsNotEmpty())
                     {

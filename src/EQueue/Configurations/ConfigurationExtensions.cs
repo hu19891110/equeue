@@ -1,10 +1,12 @@
-﻿using ECommon.Configurations;
+﻿using ECommon.Components;
+using ECommon.Configurations;
 using EQueue.Broker;
 using EQueue.Broker.Client;
 using EQueue.Broker.DeleteMessageStrategies;
 using EQueue.Broker.LongPolling;
 using EQueue.Clients.Consumers;
 using EQueue.Clients.Producers;
+using EQueue.Utils;
 
 namespace EQueue.Configurations
 {
@@ -21,8 +23,12 @@ namespace EQueue.Configurations
             configuration.SetDefault<ConsumerManager, ConsumerManager>();
             configuration.SetDefault<IConsumeOffsetStore, DefaultConsumeOffsetStore>();
             configuration.SetDefault<IQueueStore, DefaultQueueStore>();
+            configuration.SetDefault<GetTopicConsumeInfoListService, GetTopicConsumeInfoListService>();
+            configuration.SetDefault<GetConsumerListService, GetConsumerListService>();
             configuration.SetDefault<SuspendedPullRequestManager, SuspendedPullRequestManager>();
+            configuration.SetDefault<ITpsStatisticService, DefaultTpsStatisticService>();
             configuration.SetDefault<IChunkStatisticService, DefaultChunkStatisticService>();
+            configuration.SetDefault<IRTStatisticService, DefaultRTStatisticService>(life: LifeStyle.Transient);
 
             return configuration;
         }

@@ -71,11 +71,17 @@ namespace EQueue.Broker
 
         public void Start()
         {
-            _scheduleService.StartTask("LogChunkStatisticStatus", LogChunkStatisticStatus, 1000, 1000);
+            if (!BrokerController.Instance.Setting.IsMessageStoreMemoryMode)
+            {
+                _scheduleService.StartTask("LogChunkStatisticStatus", LogChunkStatisticStatus, 1000, 1000);
+            }
         }
         public void Shutdown()
         {
-            _scheduleService.StopTask("LogChunkStatisticStatus");
+            if (!BrokerController.Instance.Setting.IsMessageStoreMemoryMode)
+            {
+                _scheduleService.StopTask("LogChunkStatisticStatus");
+            }
         }
 
         private CountInfo GetDefaultCountInfo(int chunkNum)
@@ -137,7 +143,6 @@ namespace EQueue.Broker
         private string UpdateReadStatus(ConcurrentDictionary<int, CountInfo> dict)
         {
             var list = new List<string>();
-            var toRemoveKeys = new List<int>();
 
             foreach (var entry in dict)
             {
@@ -147,15 +152,6 @@ namespace EQueue.Broker
                 {
                     list.Add(string.Format("[chunk:#{0},count:{1}]", chunkNum, throughput));
                 }
-                else
-                {
-                    toRemoveKeys.Add(chunkNum);
-                }
-            }
-
-            foreach (var key in toRemoveKeys)
-            {
-                _fileReadDict.Remove(key);
             }
 
             return list.Count == 0 ? "[]" : string.Join(",", list);

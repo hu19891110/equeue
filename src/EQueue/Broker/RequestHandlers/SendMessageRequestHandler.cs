@@ -1,9 +1,12 @@
 ﻿using System;
+using System.Text;
 using ECommon.Components;
 using ECommon.Logging;
 using ECommon.Remoting;
+using ECommon.Utilities;
 using EQueue.Broker.Exceptions;
 using EQueue.Broker.LongPolling;
+using EQueue.Broker.Storage;
 using EQueue.Protocols;
 using EQueue.Utils;
 
@@ -15,8 +18,13 @@ namespace EQueue.Broker.RequestHandlers
         private readonly IMessageStore _messageStore;
         private readonly IQueueStore _queueStore;
         private readonly ILogger _logger;
+        private readonly ILogger _sendRTLogger;
         private readonly object _syncObj = new object();
         private readonly BrokerController _brokerController;
+        private readonly bool _notifyWhenMessageArrived;
+        private readonly BufferQueue<StoreContext> _bufferQueue;
+        private readonly ITpsStatisticService _tpsStatisticService;
+        private const string SendMessageFailedText = "Send message failed.";
 
         public SendMessageRequestHandler(BrokerController brokerController)
         {
@@ -24,7 +32,12 @@ namespace EQueue.Broker.RequestHandlers
             _suspendedPullRequestManager = ObjectContainer.Resolve<SuspendedPullRequestManager>();
             _messageStore = ObjectContainer.Resolve<IMessageStore>();
             _queueStore = ObjectContainer.Resolve<IQueueStore>();
+            _tpsStatisticService = ObjectContainer.Resolve<ITpsStatisticService>();
+            _notifyWhenMessageArrived = _brokerController.Setting.NotifyWhenMessageArrived;
             _logger = ObjectContainer.Resolve<ILoggerFactory>().Create(GetType().FullName);
+            _sendRTLogger = ObjectContainer.Resolve<ILoggerFactory>().Create("SendRT");
+            var messageWriteQueueThreshold = brokerController.Setting.MessageWriteQueueThreshold;
+            _bufferQueue = new BufferQueue<StoreContext>("QueueBufferQueue", messageWriteQueueThreshold, OnQueueMessageCompleted, _logger);
         }
 
         public RemotingResponse HandleRequest(IRequestHandlerContext context, RemotingRequest remotingRequest)
@@ -48,25 +61,68 @@ namespace EQueue.Broker.RequestHandlers
                 throw new QueueNotExistException(message.Topic, queueId);
             }
 
-            //消息写文件需要加锁，确保顺序写文件
-            MessageStoreResult result = null;
-            lock (_syncObj)
+            _messageStore.StoreMessageAsync(queue, message, (record, parameter) =>
             {
-                var queueOffset = queue.NextOffset;
-                var messageRecord = _messageStore.StoreMessage(queueId, queueOffset, message);
-                queue.AddMessage(messageRecord.LogPosition, message.Tag);
-                queue.IncrementNextOffset();
-                result = new MessageStoreResult(messageRecord.MessageId, message.Code, message.Topic, queueId, queueOffset, message.Tag);
-            }
-
-            //如果需要立即通知所有消费者有新消息，则立即通知
-            if (_brokerController.Setting.NotifyWhenMessageArrived)
+                var storeContext = parameter as StoreContext;
+                storeContext.Queue.AddMessage(record.LogPosition, record.Tag);
+                storeContext.MessageLogRecord = record;
+                _bufferQueue.EnqueueMessage(storeContext);
+            }, new StoreContext
             {
-                _suspendedPullRequestManager.NotifyNewMessage(request.Message.Topic, result.QueueId, result.QueueOffset);
-            }
+                RequestHandlerContext = context,
+                RemotingRequest = remotingRequest,
+                Queue = queue,
+                SendMessageRequestHandler = this
+            });
 
-            var data = MessageUtils.EncodeMessageStoreResult(result);
-            return RemotingResponseFactory.CreateResponse(remotingRequest, data);
+            _tpsStatisticService.AddTopicSendCount(message.Topic, queueId);
+
+            return null;
+        }
+
+        private void OnQueueMessageCompleted(StoreContext storeContext)
+        {
+            storeContext.OnComplete();
+        }
+        class StoreContext
+        {
+            public IRequestHandlerContext RequestHandlerContext;
+            public RemotingRequest RemotingRequest;
+            public Queue Queue;
+            public MessageLogRecord MessageLogRecord;
+            public SendMessageRequestHandler SendMessageRequestHandler;
+
+            public void OnComplete()
+            {
+                if (MessageLogRecord.LogPosition >= 0 && !string.IsNullOrEmpty(MessageLogRecord.MessageId))
+                {
+                    var result = new MessageStoreResult(
+                        MessageLogRecord.MessageId,
+                        MessageLogRecord.Code,
+                        MessageLogRecord.Topic,
+                        MessageLogRecord.QueueId,
+                        MessageLogRecord.QueueOffset,
+                        MessageLogRecord.CreatedTime,
+                        MessageLogRecord.StoredTime,
+                        MessageLogRecord.Tag);
+                    var data = MessageUtils.EncodeMessageStoreResult(result);
+                    var response = RemotingResponseFactory.CreateResponse(RemotingRequest, data);
+
+                    RequestHandlerContext.SendRemotingResponse(response);
+
+                    if (SendMessageRequestHandler._notifyWhenMessageArrived)
+                    {
+                        SendMessageRequestHandler._suspendedPullRequestManager.NotifyNewMessage(MessageLogRecord.Topic, result.QueueId, result.QueueOffset);
+                    }
+
+                    SendMessageRequestHandler._brokerController.AddLatestMessage(result.MessageId, result.CreatedTime, result.StoredTime);
+                }
+                else
+                {
+                    var response = RemotingResponseFactory.CreateResponse(RemotingRequest, ResponseCode.Failed, Encoding.UTF8.GetBytes(SendMessageFailedText));
+                    RequestHandlerContext.SendRemotingResponse(response);
+                }
+            }
         }
     }
 }

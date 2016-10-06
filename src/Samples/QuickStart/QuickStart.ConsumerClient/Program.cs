@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Configuration;
 using System.Net;
 using System.Threading;
@@ -10,6 +11,7 @@ using ECommon.Socketing;
 using EQueue.Clients.Consumers;
 using EQueue.Configurations;
 using EQueue.Protocols;
+using EQueue.Utils;
 using ECommonConfiguration = ECommon.Configurations.Configuration;
 
 namespace QuickStart.ConsumerClient
@@ -33,21 +35,25 @@ namespace QuickStart.ConsumerClient
                 .RegisterUnhandledExceptionHandler()
                 .RegisterEQueueComponents();
 
-            var address = ConfigurationManager.AppSettings["BrokerAddress"];
-            var brokerAddress = string.IsNullOrEmpty(address) ? SocketUtils.GetLocalIPV4() : IPAddress.Parse(address);
+            var clusterName = ConfigurationManager.AppSettings["ClusterName"];
+            var consumerName = ConfigurationManager.AppSettings["ConsumerName"];
+            var consumerGroup = ConfigurationManager.AppSettings["ConsumerGroup"];
+            var address = ConfigurationManager.AppSettings["NameServerAddress"];
+            var topic = ConfigurationManager.AppSettings["Topic"];
+            var nameServerAddress = string.IsNullOrEmpty(address) ? SocketUtils.GetLocalIPV4() : IPAddress.Parse(address);
             var clientCount = int.Parse(ConfigurationManager.AppSettings["ClientCount"]);
             var setting = new ConsumerSetting
             {
+                ClusterName = clusterName,
                 ConsumeFromWhere = ConsumeFromWhere.FirstOffset,
-                MessageHandleMode = MessageHandleMode.Parallel,
-                BrokerAddress = new IPEndPoint(brokerAddress, 5001),
-                BrokerAdminAddress = new IPEndPoint(brokerAddress, 5002)
+                MessageHandleMode = MessageHandleMode.Sequential,
+                NameServerList = new List<IPEndPoint> { new IPEndPoint(nameServerAddress, 9493) }
             };
             var messageHandler = new MessageHandler();
             for (var i = 1; i <= clientCount; i++)
             {
-                new Consumer(ConfigurationManager.AppSettings["ConsumerGroup"], setting)
-                    .Subscribe(ConfigurationManager.AppSettings["Topic"])
+                new Consumer(consumerGroup, setting, consumerName)
+                    .Subscribe(topic)
                     .SetMessageHandler(messageHandler)
                     .Start();
             }
@@ -59,6 +65,7 @@ namespace QuickStart.ConsumerClient
             private long _handledCount;
             private long _calculateCount = 0;
             private IScheduleService _scheduleService;
+            private IRTStatisticService _rtStatisticService;
             private ILogger _logger;
 
             public MessageHandler()
@@ -66,11 +73,13 @@ namespace QuickStart.ConsumerClient
                 _scheduleService = ObjectContainer.Resolve<IScheduleService>();
                 _scheduleService.StartTask("PrintThroughput", PrintThroughput, 1000, 1000);
                 _logger = ObjectContainer.Resolve<ILoggerFactory>().Create(typeof(Program).Name);
+                _rtStatisticService = ObjectContainer.Resolve<IRTStatisticService>();
             }
 
             public void Handle(QueueMessage message, IMessageContext context)
             {
                 Interlocked.Increment(ref _handledCount);
+                _rtStatisticService.AddRT((DateTime.Now - message.CreatedTime).TotalMilliseconds);
                 context.OnMessageHandled(message);
             }
 
@@ -90,7 +99,7 @@ namespace QuickStart.ConsumerClient
                     average = totalHandledCount / _calculateCount;
                 }
 
-                _logger.InfoFormat("totalReceived: {0}, throughput: {1}/s, average: {2}", totalHandledCount, throughput, average);
+                _logger.InfoFormat("totalReceived: {0}, throughput: {1}/s, average: {2}, delay: {3:F3}ms", totalHandledCount, throughput, average, _rtStatisticService.ResetAndGetRTStatisticInfo());
             }
         }
     }
