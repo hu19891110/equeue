@@ -1,5 +1,5 @@
 ﻿using System;
-using EQueue.Broker.Storage;
+using System.Collections.Generic;
 using EQueue.Protocols;
 
 namespace EQueue.Broker
@@ -15,7 +15,8 @@ namespace EQueue.Broker
         void Load();
         void Start();
         void Shutdown();
-        void StoreMessageAsync(IQueue queue, Message message, Action<MessageLogRecord, object> callback, object parameter);
+        void StoreMessageAsync(IQueue queue, Message message, Action<MessageLogRecord, object> callback, object parameter, string producerAddress);
+        void BatchStoreMessageAsync(IQueue queue, IEnumerable<Message> messages, Action<BatchMessageLogRecord, object> callback, object parameter, string producerAddress);
         byte[] GetMessageBuffer(long position);
         QueueMessage GetMessage(long position);
         bool IsMessagePositionExist(long position);

@@ -4,13 +4,14 @@ using ECommon.Components;
 using ECommon.Extensions;
 using ECommon.Logging;
 using ECommon.Serializing;
-using EQueue.Broker.Storage;
+using ECommon.Storage;
 using EQueue.Protocols.Brokers;
 
 namespace EQueue.Broker
 {
     public interface IQueue
     {
+        string Topic { get; }
         int QueueId { get; }
         long NextOffset { get; }
         long IncrementNextOffset();

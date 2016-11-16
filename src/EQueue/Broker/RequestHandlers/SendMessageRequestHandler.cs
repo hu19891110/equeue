@@ -6,7 +6,6 @@ using ECommon.Remoting;
 using ECommon.Utilities;
 using EQueue.Broker.Exceptions;
 using EQueue.Broker.LongPolling;
-using EQueue.Broker.Storage;
 using EQueue.Protocols;
 using EQueue.Utils;
 
@@ -64,8 +63,16 @@ namespace EQueue.Broker.RequestHandlers
             _messageStore.StoreMessageAsync(queue, message, (record, parameter) =>
             {
                 var storeContext = parameter as StoreContext;
-                storeContext.Queue.AddMessage(record.LogPosition, record.Tag);
-                storeContext.MessageLogRecord = record;
+                if (record.LogPosition >= 0 && !string.IsNullOrEmpty(record.MessageId))
+                {
+                    storeContext.Queue.AddMessage(record.LogPosition, record.Tag);
+                    storeContext.MessageLogRecord = record;
+                    storeContext.Success = true;
+                }
+                else
+                {
+                    storeContext.Success = false;
+                }
                 _bufferQueue.EnqueueMessage(storeContext);
             }, new StoreContext
             {
@@ -73,7 +80,7 @@ namespace EQueue.Broker.RequestHandlers
                 RemotingRequest = remotingRequest,
                 Queue = queue,
                 SendMessageRequestHandler = this
-            });
+            }, request.ProducerAddress);
 
             _tpsStatisticService.AddTopicSendCount(message.Topic, queueId);
 
@@ -91,10 +98,11 @@ namespace EQueue.Broker.RequestHandlers
             public Queue Queue;
             public MessageLogRecord MessageLogRecord;
             public SendMessageRequestHandler SendMessageRequestHandler;
+            public bool Success;
 
             public void OnComplete()
             {
-                if (MessageLogRecord.LogPosition >= 0 && !string.IsNullOrEmpty(MessageLogRecord.MessageId))
+                if (Success)
                 {
                     var result = new MessageStoreResult(
                         MessageLogRecord.MessageId,
